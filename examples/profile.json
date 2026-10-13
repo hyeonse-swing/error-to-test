@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "error-to-test/profile-1",
+  "name": "Controlled local error-handling demo",
+  "scenarios": [
+    {
+      "id": "missing-item", "title": "Missing item shows a fallback",
+      "match": { "pagePath": "/items", "messageIncludes": "reading 'name'" },
+      "requirement": "Clicking View item with missing item data shows Item unavailable.",
+      "expectedSource": "Local demo contract: missing item fallback",
+      "preconditions": ["Use the local demo; item data is intentionally missing on a fresh page."],
+      "setupConfirmed": true,
+      "steps": [
+        { "type": "open", "path": "/items" },
+        { "type": "click", "locator": { "by": "role", "value": "button", "name": "View item" } },
+        { "type": "assertText", "locator": { "by": "role", "value": "status" }, "expected": "Item unavailable", "match": "equals" }
+      ]
+    },
+    {
+      "id": "network-retry", "title": "Failed request explains the error and supports retry",
+      "match": { "type": "http", "pagePath": "/network", "networkPath": "/api/items" },
+      "requirement": "A 503 response shows Service unavailable. Retrying successfully displays Demo item.",
+      "expectedSource": "Local demo contract: deterministic first-request failure and retry",
+      "preconditions": ["Use the local demo; Load items returns 503 and Retry returns 200."],
+      "setupConfirmed": true,
+      "steps": [
+        { "type": "open", "path": "/network" },
+        { "type": "click", "locator": { "by": "role", "value": "button", "name": "Load items" } },
+        { "type": "assertText", "locator": { "by": "role", "value": "alert" }, "expected": "Service unavailable", "match": "equals" },
+        { "type": "click", "locator": { "by": "role", "value": "button", "name": "Retry" } },
+        { "type": "assertText", "locator": { "by": "testId", "value": "item-list" }, "expected": "Demo item", "match": "equals" }
+      ]
+    }
+  ]
+}

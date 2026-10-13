@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.error-to-test/
+*.tgz
+.env*
+.npmrc
+output/
+.DS_Store

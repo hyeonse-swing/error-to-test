@@ -1,0 +1,117 @@
+name: Verify and release
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run check:package
+  prepare:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_sha: ${{ steps.prepare.outputs.release_sha }}
+      release_candidate: ${{ steps.prepare.outputs.release_candidate }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Prepare version and immutable source SHA
+        id: prepare
+        run: node scripts/npm-release.mjs prepare
+  publish:
+    if: needs.prepare.outputs.release_candidate == 'true'
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      release_candidate: ${{ steps.release.outputs.release_candidate }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ERROR_TO_TEST_RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Check release version and source
+        id: release
+        run: node scripts/npm-release.mjs gate
+      - name: Prepare release package
+        if: steps.release.outputs.release_candidate == 'true'
+        run: |
+          npm ci
+          npm run check:package
+      - name: Publish to npm with trusted publishing
+        if: steps.release.outputs.should_publish == 'true'
+        run: |
+          npm install --global npm@11.21.0
+          npm publish --access public --provenance
+      - name: Confirm exact npm release
+        if: steps.release.outputs.release_candidate == 'true'
+        env:
+          ERROR_TO_TEST_REQUIRE_LATEST: ${{ steps.release.outputs.should_publish }}
+        run: node scripts/npm-release.mjs verify
+      - name: Smoke test registry tarball and fresh consumer
+        if: steps.release.outputs.release_candidate == 'true'
+        run: node scripts/npm-release.mjs smoke
+  github_release:
+    if: needs.publish.outputs.release_candidate == 'true'
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      ERROR_TO_TEST_RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Create matching GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ERROR_TO_TEST_RELEASE_VERSION: ${{ needs.publish.outputs.version }}
+          ERROR_TO_TEST_RELEASE_CANDIDATE: ${{ needs.publish.outputs.release_candidate }}
+        run: node scripts/github-release.mjs

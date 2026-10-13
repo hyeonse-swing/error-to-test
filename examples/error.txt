@@ -1,0 +1,2 @@
+[ERROR] TypeError: Cannot read properties of undefined (reading 'name')
+    at renderItem (/app.js:33:8)

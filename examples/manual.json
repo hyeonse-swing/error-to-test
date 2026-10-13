@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "error-to-test/manual-1",
+  "errors": [
+    {
+      "message": "TypeError: Cannot read properties of undefined (reading 'name')",
+      "type": "javascript",
+      "runtime": "browser",
+      "page": "/items",
+      "stack": "at renderItem (/app.js:33:8)",
+      "reproduction": ["Open the item list", "Click View item when the item is missing"],
+      "expected": "Show Item unavailable instead of breaking the panel",
+      "expectedSource": "Reported intended behavior; confirm with the app owner"
+    }
+  ]
+}

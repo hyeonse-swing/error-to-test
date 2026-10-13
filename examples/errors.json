@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "partial": true,
+  "events": [
+    {
+      "schemaVersion": 1, "eventId": "demo-js-1", "project": "error-to-test-demo", "environment": "test", "release": "buggy", "sdkVersion": "0.1.5",
+      "occurredAt": "2026-10-13T01:00:00Z", "viewId": "view-1", "sequence": 1, "elapsedMs": 100,
+      "type": "javascript", "name": "TypeError", "message": "Cannot read properties of undefined (reading 'name')", "stack": "at renderItem (/app.js:33:8)", "page": "http://127.0.0.1:4179/items", "runtime": "browser"
+    },
+    {
+      "schemaVersion": 1, "eventId": "demo-js-2", "project": "error-to-test-demo", "environment": "test", "release": "buggy", "sdkVersion": "0.1.5",
+      "occurredAt": "2026-10-13T01:01:00Z", "viewId": "view-2", "sequence": 1, "elapsedMs": 100,
+      "type": "javascript", "name": "TypeError", "message": "Cannot read properties of undefined (reading 'name')", "stack": "at renderItem (/app.js:33:8)", "page": "http://127.0.0.1:4179/items", "runtime": "browser"
+    },
+    {
+      "schemaVersion": 1, "eventId": "demo-http-1", "project": "error-to-test-demo", "environment": "test", "release": "buggy", "sdkVersion": "0.1.5",
+      "occurredAt": "2026-10-13T01:02:00Z", "viewId": "view-3", "sequence": 1, "elapsedMs": 100,
+      "type": "http", "message": "HTTP 503 GET /api/items", "page": "http://127.0.0.1:4179/network", "runtime": "browser",
+      "network": { "method": "GET", "url": "http://127.0.0.1:4179/api/items", "status": 503, "durationMs": 20 }
+    },
+    {
+      "schemaVersion": 1, "eventId": "demo-unknown-1", "project": "error-to-test-demo", "environment": "test", "release": "buggy", "sdkVersion": "0.1.5",
+      "occurredAt": "2026-10-13T01:03:00Z", "viewId": "view-4", "sequence": 1, "elapsedMs": 100,
+      "type": "manual", "message": "Missing product policy for this error", "page": "http://127.0.0.1:4179/unknown", "runtime": "browser"
+    }
+  ]
+}
