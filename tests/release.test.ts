@@ -66,6 +66,43 @@ test('downloaded tarball must match registry SHA-512', async () => {
   assert.throws(() => npmRelease.verifyTarballIntegrity(bytes, undefined), /missing SHA-512/);
 });
 
+test('fresh consumer removes inherited npm auth and config', () => {
+  const env = npmRelease.anonymousNpmEnvironment({
+    PATH: '/usr/bin', NODE_AUTH_TOKEN: 'invalid', NPM_TOKEN: 'invalid',
+    NPM_CONFIG_USERCONFIG: '/inherited/.npmrc', npm_config_registry: 'https://private.example/',
+    npm_config_always_auth: 'true',
+  }, '/temporary/consumer');
+  assert.equal(env.PATH, '/usr/bin');
+  assert.equal(env.NODE_AUTH_TOKEN, undefined);
+  assert.equal(env.NPM_TOKEN, undefined);
+  assert.equal(env.npm_config_always_auth, undefined);
+  assert.equal(env.NPM_CONFIG_USERCONFIG, '/temporary/consumer/user.npmrc');
+  assert.equal(env.NPM_CONFIG_GLOBALCONFIG, '/temporary/consumer/global.npmrc');
+  assert.equal(env.NPM_CONFIG_REGISTRY, 'https://registry.npmjs.org/');
+});
+
+test('registry install retries only exact package-index 404', async () => {
+  const index404 = { stderr: Buffer.from('npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/@ihyeon%2ferror-to-test - Not found') };
+  const tarball404 = { stderr: Buffer.from('npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/@ihyeon/error-to-test/-/error-to-test-0.1.0.tgz') };
+  assert.equal(npmRelease.isPackument404(index404), true);
+  assert.equal(npmRelease.isPackument404(tarball404), false);
+  assert.equal(npmRelease.isPackument404({ stderr: 'npm error code E401' }), false);
+  let calls = 0;
+  let pauses = 0;
+  await npmRelease.installPublishedPackage('/temp', '0.1.0', {}, () => {
+    calls++;
+    if (calls < 3) throw index404;
+  }, async () => { pauses++; });
+  assert.equal(calls, 3);
+  assert.equal(pauses, 2);
+  calls = 0;
+  await assert.rejects(npmRelease.installPublishedPackage('/temp', '0.1.0', {}, () => {
+    calls++;
+    throw tarball404;
+  }, async () => { pauses++; }), error => error === tarball404);
+  assert.equal(calls, 1);
+});
+
 test('GitHub release input is limited to exact main push', () => {
   const env = { ERROR_TO_TEST_RELEASE_VERSION: '0.1.0', ERROR_TO_TEST_RELEASE_CANDIDATE: 'true', GITHUB_SHA: sha, GITHUB_REPOSITORY: 'hyeonse-swing/error-to-test', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GH_TOKEN: 'test-token' };
   assert.deepEqual(githubRelease.validateReleaseInput(env, '0.1.0'), { repository: env.GITHUB_REPOSITORY, version: '0.1.0', tag: 'v0.1.0', sha });

@@ -131,6 +131,41 @@ export function verifyTarballIntegrity(bytes, integrity) {
   if (actual !== integrity) throw new Error('Downloaded npm tarball integrity does not match registry metadata');
 }
 
+export function anonymousNpmEnvironment(parent, temp) {
+  const env = Object.fromEntries(Object.entries(parent).filter(([key]) =>
+    !/^npm_config_/i.test(key) && !/^(NODE_AUTH_TOKEN|NPM_TOKEN|NPM_AUTH_TOKEN)$/i.test(key)));
+  return {
+    ...env,
+    NPM_CONFIG_USERCONFIG: join(temp, 'user.npmrc'),
+    NPM_CONFIG_GLOBALCONFIG: join(temp, 'global.npmrc'),
+    NPM_CONFIG_CACHE: join(temp, 'cache'),
+    NPM_CONFIG_REGISTRY: 'https://registry.npmjs.org/',
+    NPM_CONFIG_AUDIT: 'false',
+    NPM_CONFIG_FUND: 'false',
+    NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+  };
+}
+
+export function isPackument404(error) {
+  const stderr = Buffer.isBuffer(error?.stderr) ? error.stderr.toString('utf8') : error?.stderr;
+  return typeof stderr === 'string' && /npm error code E404\b/.test(stderr) &&
+    /404 Not Found - GET https:\/\/registry\.npmjs\.org\/@ihyeon%2ferror-to-test(?:\s|$)/i.test(stderr);
+}
+
+export async function installPublishedPackage(temp, version, env, run = execFileSync, pause = ms => new Promise(done => setTimeout(done, ms))) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', `${NAME}@${version}`],
+        { cwd: temp, env, stdio: 'pipe', timeout: 120_000 });
+      return;
+    } catch (error) {
+      if (!isPackument404(error) || attempt === 5) throw error;
+      console.log(`npm package index returned 404; retrying (${attempt}/4)`);
+      await pause(15_000);
+    }
+  }
+}
+
 async function smokePublishedPackage(version, githubSha) {
   const metadata = await registryMetadata(version);
   confirmPublishedSource(metadata, githubSha);
@@ -144,8 +179,9 @@ async function smokePublishedPackage(version, githubSha) {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-release-'));
   try {
     await writeFile(join(temp, 'package.json'), '{"type":"module","private":true}\n');
-    const npmEnv = { ...process.env, npm_config_cache: join(temp, 'cache'), npm_config_audit: 'false', npm_config_fund: 'false' };
-    execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', `${NAME}@${version}`], { cwd: temp, env: npmEnv, stdio: 'pipe', timeout: 120_000 });
+    await Promise.all([writeFile(join(temp, 'user.npmrc'), ''), writeFile(join(temp, 'global.npmrc'), '')]);
+    const npmEnv = anonymousNpmEnvironment(process.env, temp);
+    await installPublishedPackage(temp, version, npmEnv);
     await writeFile(join(temp, 'consumer.mjs'), `import { analyzeErrors, exportFlowQa } from '${NAME}';\nconst result = analyzeErrors('TypeError: missing item');\nif (result.candidates.length !== 1 || !exportFlowQa(result).suite.cases[0]?.questions.length) throw new Error('Published import failed');\n`);
     execFileSync(process.execPath, ['consumer.mjs'], { cwd: temp, stdio: 'pipe', timeout: 30_000 });
     const help = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), ['--help'], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
