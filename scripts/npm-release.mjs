@@ -152,15 +152,23 @@ export function isPackument404(error) {
     /404 Not Found - GET https:\/\/registry\.npmjs\.org\/@ihyeon%2ferror-to-test(?:\s|$)/i.test(stderr);
 }
 
+export function isRetryableIndexDelay(error, version) {
+  if (isPackument404(error)) return true;
+  const stderr = Buffer.isBuffer(error?.stderr) ? error.stderr.toString('utf8') : error?.stderr;
+  if (typeof stderr !== 'string' || !/npm error code ETARGET\b/.test(stderr)) return false;
+  const target = `No matching version found for ${NAME}@${version}.`;
+  return stderr.split(/\r?\n/).some(line => line.trim() === `npm error notarget ${target}` || line.trim() === `npm error ${target}`);
+}
+
 export async function installPublishedPackage(temp, version, env, run = execFileSync, pause = ms => new Promise(done => setTimeout(done, ms))) {
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
-      run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', `${NAME}@${version}`],
+      run('npm', ['install', '--prefer-online', '--ignore-scripts', '--no-audit', '--no-fund', `${NAME}@${version}`],
         { cwd: temp, env, stdio: 'pipe', timeout: 120_000 });
       return;
     } catch (error) {
-      if (!isPackument404(error) || attempt === 5) throw error;
-      console.log(`npm package index returned 404; retrying (${attempt}/4)`);
+      if (!isRetryableIndexDelay(error, version) || attempt === 5) throw error;
+      console.log(`npm package index has not exposed ${NAME}@${version}; retrying (${attempt}/4)`);
       await pause(15_000);
     }
   }

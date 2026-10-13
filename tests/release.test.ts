@@ -81,17 +81,25 @@ test('fresh consumer removes inherited npm auth and config', () => {
   assert.equal(env.NPM_CONFIG_REGISTRY, 'https://registry.npmjs.org/');
 });
 
-test('registry install retries only exact package-index 404', async () => {
+test('registry install retries only exact index 404 or requested-version ETARGET', async () => {
   const index404 = { stderr: Buffer.from('npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/@ihyeon%2ferror-to-test - Not found') };
   const tarball404 = { stderr: Buffer.from('npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/@ihyeon/error-to-test/-/error-to-test-0.1.0.tgz') };
+  const target = { stderr: Buffer.from('npm error code ETARGET\nnpm error notarget No matching version found for @ihyeon/error-to-test@0.1.1.\nnpm error notarget In most cases...') };
   assert.equal(npmRelease.isPackument404(index404), true);
   assert.equal(npmRelease.isPackument404(tarball404), false);
   assert.equal(npmRelease.isPackument404({ stderr: 'npm error code E401' }), false);
+  assert.equal(npmRelease.isRetryableIndexDelay(target, '0.1.1'), true);
+  assert.equal(npmRelease.isRetryableIndexDelay(target, '0.1.0'), false);
+  assert.equal(npmRelease.isRetryableIndexDelay({ stderr: 'npm error code ETARGET\nnpm error notarget No matching version found for @other/error-to-test@0.1.1.' }, '0.1.1'), false);
+  assert.equal(npmRelease.isRetryableIndexDelay({ stderr: 'npm error code E401\nnpm error notarget No matching version found for @ihyeon/error-to-test@0.1.1.' }, '0.1.1'), false);
+  assert.equal(npmRelease.isRetryableIndexDelay(tarball404, '0.1.1'), false);
   let calls = 0;
   let pauses = 0;
-  await npmRelease.installPublishedPackage('/temp', '0.1.0', {}, () => {
+  await npmRelease.installPublishedPackage('/temp', '0.1.1', {}, (_command: string, args: string[]) => {
+    assert.ok(args.includes('--prefer-online'));
     calls++;
-    if (calls < 3) throw index404;
+    if (calls === 1) throw index404;
+    if (calls === 2) throw target;
   }, async () => { pauses++; });
   assert.equal(calls, 3);
   assert.equal(pauses, 2);
@@ -101,6 +109,14 @@ test('registry install retries only exact package-index 404', async () => {
     throw tarball404;
   }, async () => { pauses++; }), error => error === tarball404);
   assert.equal(calls, 1);
+  calls = 0;
+  pauses = 0;
+  await assert.rejects(npmRelease.installPublishedPackage('/temp', '0.1.1', {}, () => {
+    calls++;
+    throw target;
+  }, async () => { pauses++; }), error => error === target);
+  assert.equal(calls, 5);
+  assert.equal(pauses, 4);
 });
 
 test('GitHub release input is limited to exact main push', () => {
