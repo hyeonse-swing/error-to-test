@@ -18,7 +18,7 @@ try {
   const consumer = `import assert from 'node:assert/strict';\nimport { analyzeErrors, exportFlowQa } from '@ihyeon/error-to-test';\nconst analysis=analyzeErrors('TypeError: missing item');\nassert.equal(analysis.candidates.length,1);\nassert.ok(exportFlowQa(analysis).suite.cases[0].questions.length);\n`;
   await writeFile(join(temp, 'consumer.mjs'), consumer);
   execFileSync(process.execPath, ['consumer.mjs'], { cwd: temp, stdio: 'pipe' });
-  const bin = execFileSync(process.execPath, ['node_modules/@ihyeon/error-to-test/bin/error-to-test.mjs', '--help'], { cwd: temp, encoding: 'utf8' });
+  const bin = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), ['--help'], { cwd: temp, encoding: 'utf8' });
   assert.match(bin, /--error/);
   console.log('Packed package, independent import, and installed CLI: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

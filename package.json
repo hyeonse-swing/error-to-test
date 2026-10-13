@@ -12,7 +12,7 @@
   "type": "module",
   "engines": { "node": ">=24.8.0" },
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "bin": { "error-to-test": "./bin/error-to-test.mjs" },
+  "bin": { "error-to-test": "bin/error-to-test.mjs" },
   "files": ["dist", "bin/error-to-test.mjs", "docs", "examples", "README.ko.md", "LICENSE"],
   "scripts": {
     "build": "tsc",

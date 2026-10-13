@@ -148,7 +148,7 @@ async function smokePublishedPackage(version, githubSha) {
     execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', `${NAME}@${version}`], { cwd: temp, env: npmEnv, stdio: 'pipe', timeout: 120_000 });
     await writeFile(join(temp, 'consumer.mjs'), `import { analyzeErrors, exportFlowQa } from '${NAME}';\nconst result = analyzeErrors('TypeError: missing item');\nif (result.candidates.length !== 1 || !exportFlowQa(result).suite.cases[0]?.questions.length) throw new Error('Published import failed');\n`);
     execFileSync(process.execPath, ['consumer.mjs'], { cwd: temp, stdio: 'pipe', timeout: 30_000 });
-    const help = execFileSync(process.execPath, [join(temp, 'node_modules/@ihyeon/error-to-test/bin/error-to-test.mjs'), '--help'], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+    const help = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), ['--help'], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
     if (!help.includes('--error')) throw new Error('Published CLI help is missing --error');
     console.log(`${NAME}@${version}: tarball SHA-512, fresh consumer import, and CLI confirmed`);
   } finally { await rm(temp, { recursive: true, force: true }); }
