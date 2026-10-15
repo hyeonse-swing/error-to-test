@@ -60,7 +60,7 @@ Supported web steps match Flow QA: `open`, `click`, `fill`, `act`, `assertVisibl
 Generated files (Flow QA source is limited to 128 KB; suite JSON to 512 KiB):
 
 - `analysis.json`: coverage, ranked groups, safe representative evidence, full-source context checks, and TC candidates.
-- `report.md`: human-readable analysis and missing context.
+- `report.md`: human-readable analysis, reported reproduction, preconditions, proposed test steps, and missing context.
 - `flows/error-to-test.md`: observed facts, requirements, steps, and questions.
 - `cases/error-to-test.json`: Flow QA `suite-1` (omitted when no records match).
 - `provenance.json`: source/profile/analysis/report/flow/suite hashes and event → group → case mappings.

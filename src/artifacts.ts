@@ -28,6 +28,9 @@ export function renderReport(analysis: Analysis): string {
       literal(`${group.project} / ${group.environment} / ${group.release} / ${group.runtime}\n${group.type} ${group.pagePath}\n${group.message}`), '');
     for (const candidate of analysis.candidates.filter(item => item.groupId === group.id)) {
       lines.push(`### ${candidate.id} · ${candidate.state}`, '', literal(candidate.title), '', 'Observed facts:', literal(candidate.facts.join('\n')),
+        '', 'Reported reproduction:', literal(candidate.reproduction.join('\n') || 'Not supplied'),
+        '', 'Preconditions:', literal(candidate.preconditions.join('\n') || 'Not supplied'),
+        '', 'Proposed test steps:', literal(candidate.steps.length ? JSON.stringify(candidate.steps, null, 2) : 'Not supplied'),
         '', 'Expected behavior:', literal(candidate.expected ? `${candidate.expected.text}\nSource: ${candidate.expected.source}` : 'Unresolved'),
         '', 'Questions:', literal(candidate.questions.join('\n') || 'No context questions. Review is still required before execution.'), '');
     }
