@@ -1,19 +1,51 @@
 {
   "name": "@ihyeon/error-to-test",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Turn captured browser errors and pasted error reports into traceable regression test candidates.",
   "license": "MIT",
   "author": "Hyeonse Im",
-  "repository": { "type": "git", "url": "git+https://github.com/hyeonse-swing/error-to-test.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyeonse-swing/error-to-test.git"
+  },
   "homepage": "https://github.com/hyeonse-swing/error-to-test#readme",
-  "bugs": { "url": "https://github.com/hyeonse-swing/error-to-test/issues" },
-  "keywords": ["browser-errors", "regression-testing", "test-cases", "qa", "cli", "flow-qa"],
-  "publishConfig": { "access": "public", "tag": "latest", "registry": "https://registry.npmjs.org" },
+  "bugs": {
+    "url": "https://github.com/hyeonse-swing/error-to-test/issues"
+  },
+  "keywords": [
+    "browser-errors",
+    "regression-testing",
+    "test-cases",
+    "qa",
+    "cli",
+    "flow-qa"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest",
+    "registry": "https://registry.npmjs.org"
+  },
   "type": "module",
-  "engines": { "node": ">=24.8.0" },
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "bin": { "error-to-test": "bin/error-to-test.mjs" },
-  "files": ["dist", "bin/error-to-test.mjs", "docs", "examples", "README.ko.md", "LICENSE"],
+  "engines": {
+    "node": ">=24.8.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "error-to-test": "bin/error-to-test.mjs"
+  },
+  "files": [
+    "dist",
+    "bin/error-to-test.mjs",
+    "docs",
+    "examples",
+    "README.ko.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -24,5 +56,8 @@
     "smoke:flowqa": "node scripts/flowqa-smoke.ts",
     "demo": "node bin/dev.mjs analyze --input examples/errors.json --profile examples/profile.json --out .error-to-test/demo"
   },
-  "devDependencies": { "@types/node": "^24.0.0", "typescript": "5.9.3" }
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "5.9.3"
+  }
 }
