@@ -24,8 +24,10 @@ Requires Node.js 24.8+. From this directory:
 npm ci
 npm run check
 node bin/error-to-test.mjs --help
-node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --out .error-to-test/example
+npm run demo
 ```
+
+Each demo run saves its results in a new `.error-to-test/run-*` directory and prints the report path.
 
 Every output directory must be new. The command never overwrites an existing analysis.
 

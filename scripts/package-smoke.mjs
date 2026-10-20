@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 
 const root = resolve('.');
 const temp = await mkdtemp(join(tmpdir(), 'error-to-test-consumer-'));
@@ -25,5 +25,17 @@ try {
     const output = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), [option], { cwd: temp, encoding: 'utf8' });
     assert.equal(output, `${installedManifest.version}\n`);
   }
-  console.log('Packed package, independent import, and installed CLI: PASS (offline; no runtime dependencies).');
+  const installedRoot = join(temp, 'node_modules/@ihyeon/error-to-test');
+  const reports = [];
+  for (let run = 0; run < 2; run++) {
+    const output = execFileSync('npm', ['run', 'demo', '--prefix', installedRoot], { cwd: temp, encoding: 'utf8', env: npmEnvironment, timeout: 30_000 });
+    const report = output.match(/^Review (.+)$/m)?.[1];
+    assert.ok(report, 'The demo must print its report path.');
+    reports.push({ path: report, content: await readFile(report, 'utf8') });
+    const verified = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), ['verify', dirname(report), '--input', join(installedRoot, 'examples/errors.json'), '--profile', join(installedRoot, 'examples/profile.json')], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+    assert.match(verified, /Suite: present; review: pending; original input: checked/);
+  }
+  assert.notEqual(reports[0].path, reports[1].path);
+  assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
+  console.log('Packed package, independent import, installed CLI, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

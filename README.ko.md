@@ -14,6 +14,8 @@ JavaScript API는 `npm install @ihyeon/error-to-test`로 설치합니다. [배�
 
 Node.js 24.8 이상이 필요합니다. 현재 폴더에서 `npm ci`, `npm run check`를 실행한 뒤 사용하세요.
 
+샘플은 `npm run demo`로 실행합니다. 매번 새 `.error-to-test/run-*` 폴더에 결과를 저장하고 보고서 경로를 출력합니다.
+
 ```sh
 # SDK 없이 오류 하나를 직접 입력
 node bin/error-to-test.mjs analyze --error "TypeError: item is undefined" --page /items --runtime browser --reproduce "View item 버튼 클릭" --expected "빈 상태 안내 표시" --expected-source "사용자가 설명한 기대 동작" --out .error-to-test/pasted
