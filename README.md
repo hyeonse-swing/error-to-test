@@ -10,6 +10,7 @@ Turn captured browser errors **or a pasted error report** into grouped issues, r
 
 ```sh
 npm install -g @ihyeon/error-to-test
+error-to-test --version
 error-to-test analyze --error "TypeError: item is undefined" --page /items --out ./new-result
 ```
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 
@@ -20,5 +20,10 @@ try {
   execFileSync(process.execPath, ['consumer.mjs'], { cwd: temp, stdio: 'pipe' });
   const bin = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), ['--help'], { cwd: temp, encoding: 'utf8' });
   assert.match(bin, /--error/);
+  const installedManifest = JSON.parse(await readFile(join(temp, 'node_modules/@ihyeon/error-to-test/package.json'), 'utf8'));
+  for (const option of ['--version', '-v']) {
+    const output = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), [option], { cwd: temp, encoding: 'utf8' });
+    assert.equal(output, `${installedManifest.version}\n`);
+  }
   console.log('Packed package, independent import, and installed CLI: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

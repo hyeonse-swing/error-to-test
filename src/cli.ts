@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { analyzeErrors } from './analysis.ts';
 import { readBoundedFile, verifyBundle, writeBundle } from './artifacts.ts';
@@ -36,6 +37,7 @@ Options:
   --out DIRECTORY        New directory; existing files are never overwritten
   --reviewed             Acknowledge review; unresolved questions still block cases
   --report FILE          Normalized Flow QA report (link-run only)
+  --version, -v          Print the package version
 
 No model call or browser execution occurs. Review report.md and cases/error-to-test.json first.
 Use a local file or stdin for private errors; avoid secrets in shell history.
@@ -55,14 +57,20 @@ async function stdinText(): Promise<string> {
 }
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
-    help: { type: 'boolean', short: 'h' }, input: { type: 'string' }, error: { type: 'string' }, report: { type: 'string' },
+    help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string' }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
     top: { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
-  if (values.help || positionals.length === 0) { process.stdout.write(help); return; }
+  if (values.help) { process.stdout.write(help); return; }
+  if (values.version) {
+    const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    process.stdout.write(`${manifest.version}\n`);
+    return;
+  }
+  if (positionals.length === 0) { process.stdout.write(help); return; }
   const command = positionals[0];
   if (command === 'link-run') {
     if (positionals.length !== 2 || !positionals[1] || !values.report) throw new Error('link-run requires a bundle directory and --report.');

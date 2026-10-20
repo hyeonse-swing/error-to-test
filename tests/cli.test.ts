@@ -8,6 +8,15 @@ import { fileURLToPath } from 'node:url';
 
 const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
 function run(args: string[], input?: string) { return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', input, timeout: 15000 }); }
+test('global version aliases print the package version without a command', async () => {
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  for (const option of ['--version', '-v']) {
+    const result = run([option]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${version}\n`);
+    assert.equal(result.stderr, '');
+  }
+});
 test('standalone error input produces a traceable blocked TC without SDK or model', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-'));
   try {

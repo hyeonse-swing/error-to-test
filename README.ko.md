@@ -6,6 +6,7 @@ SDK에서 내보낸 브라우저 오류 로그 또는 **직접 입력한 오류 
 
 ```sh
 npm install -g @ihyeon/error-to-test
+error-to-test --version
 error-to-test analyze --error "TypeError: item is undefined" --page /items --out ./new-result
 ```
 
