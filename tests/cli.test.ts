@@ -1,13 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
 function run(args: string[], input?: string) { return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', input, timeout: 15000 }); }
+test('options require a command; bare invocation and help remain available', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-command-'));
+  try {
+    for (const [name, options] of [
+      ['error', ['--error', 'TypeError: missing item']],
+      ['input', ['--input', join(temp, 'missing.json')]],
+      ['reviewed', ['--reviewed']],
+    ] as const) {
+      const out = join(temp, name);
+      const result = run([...options, '--out', out]);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /A command is required/);
+      assert.equal(result.stdout, '');
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+    for (const args of [[], ['--help'], ['-h']]) {
+      const result = run(args);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /error-to-test analyze/);
+      assert.equal(result.stderr, '');
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
 test('global version aliases print the package version without a command', async () => {
   const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   for (const option of ['--version', '-v']) {

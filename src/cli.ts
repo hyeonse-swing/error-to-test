@@ -70,7 +70,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`${manifest.version}\n`);
     return;
   }
-  if (positionals.length === 0) { process.stdout.write(help); return; }
+  if (positionals.length === 0) {
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, verify, or link-run. See --help.');
+    process.stdout.write(help);
+    return;
+  }
   const command = positionals[0];
   if (command === 'link-run') {
     if (positionals.length !== 2 || !positionals[1] || !values.report) throw new Error('link-run requires a bundle directory and --report.');
