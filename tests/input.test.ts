@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { parseInput } from '../src/input.ts';
 import { pagePath, redactText, safeUrl } from '../src/redact.ts';
 
@@ -21,6 +22,33 @@ test('browser export validates protocol and preserves only sanitized observation
   assert.equal(parsed.observations[0]?.network?.url, 'https://example.com/api/order');
   assert.equal(parsed.observations[0]?.occurredAt, '2026-10-13T03:00:00.000Z');
   assert.equal('sequence' in parsed.observations[0]!, false);
+});
+
+test('JSON inputs accept one leading UTF-8 BOM while hashing the original bytes', () => {
+  for (const value of [
+    [event],
+    { schemaVersion: 1, events: [event] },
+    { schemaVersion: 'error-to-test/manual-1', errors: [{ message: 'Error: an observed failure' }] },
+  ]) {
+    const json = JSON.stringify(value);
+    const source = `\uFEFF${json}`;
+    for (const format of ['auto', 'json'] as const) {
+      const parsed = parseInput(source, { format });
+      const plain = parseInput(json, { format });
+      assert.deepEqual(parsed.observations, plain.observations);
+      assert.deepEqual(parsed.coverage, plain.coverage);
+      assert.equal(parsed.sha256, createHash('sha256').update(source).digest('hex'));
+      assert.notEqual(parsed.sha256, plain.sha256);
+    }
+  }
+});
+
+test('a leading BOM does not hide malformed JSON or allow a second BOM', () => {
+  for (const format of ['auto', 'json'] as const) {
+    for (const source of ['\uFEFF{invalid', '\uFEFF[{"schemaVersion":', '\uFEFF\uFEFF[]']) {
+      assert.throws(() => parseInput(source, { format }), /Malformed JSON input/);
+    }
+  }
 });
 
 test('invalid protocol fields and conflicting duplicate IDs reject', () => {

@@ -181,7 +181,8 @@ export function parseInput(content: string, options: ParseInputOptions = {}): Pa
   let raw: unknown[];
   if (isJson) {
     let parsed: unknown;
-    try { parsed = JSON.parse(content); } catch { throw new Error('Malformed JSON input'); }
+    // Ignore a file's BOM only while parsing; provenance hashes the original content.
+    try { parsed = JSON.parse(content.replace(/^\uFEFF/, '')); } catch { throw new Error('Malformed JSON input'); }
     if (Array.isArray(parsed)) {
       kind = 'browser-error-json';
       raw = parsed;

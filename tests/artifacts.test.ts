@@ -70,6 +70,18 @@ test('bundle writes Flow QA layout, verifies source bytes and preserves existing
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('a JSON bundle verifies the original BOM bytes and rejects a stripped source', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-bom-'));
+  try {
+    const json = JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ message: 'Error: an observed failure' }] });
+    const source = `\uFEFF${json}`;
+    const out = join(temp, 'result');
+    await writeBundle(out, analyzeErrors(source));
+    assert.deepEqual(await verifyBundle(out, { input: source }), { suite: true, reviewed: false, sourceChecked: true });
+    await assert.rejects(verifyBundle(out, { input: json }), /STALE_BUNDLE: Input changed/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 for (const name of ['analysis.json', 'report.md', 'flows/error-to-test.md', 'cases/error-to-test.json']) {
   test(`verification rejects altered ${name}`, async () => {
     const temp = await mkdtemp(join(tmpdir(), 'error-to-test-stale-'));
