@@ -12,7 +12,14 @@ error-to-test analyze --error "TypeError: item is undefined" --page /items --out
 
 JavaScript API는 `npm install @ihyeon/error-to-test`로 설치합니다. [배포·검증 안내](docs/releases.md)에서 자동 게시 방식과 검증 범위를 확인할 수 있습니다.
 
-Node.js 24.8 이상이 필요합니다. 현재 폴더에서 `npm ci`, `npm run check`를 실행한 뒤 사용하세요.
+Node.js 24 계열의 24.22.1 이상 또는 Node.js 26.12.1 이상이 필요합니다. [2026년 10월 보안 업데이트](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)를 반영한 최소 버전입니다. nvm을 사용한다면 현재 폴더에서 다음을 실행하세요.
+
+```sh
+nvm install
+nvm use
+```
+
+이후 `npm ci`, `npm run check`를 실행한 뒤 사용하세요. Node.js 런타임은 별도로 설치하거나 업데이트해야 합니다. `npm install`은 런타임을 업데이트하지 않으며, npm은 `engine-strict`를 켜지 않은 경우 지원하지 않는 `engines` 버전에 경고만 표시합니다.
 
 샘플은 `npm run demo`로 실행합니다. 매번 새 `.error-to-test/run-*` 폴더에 결과를 저장하고 보고서 경로를 출력합니다.
 

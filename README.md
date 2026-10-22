@@ -18,7 +18,14 @@ For the JavaScript API, install `npm install @ihyeon/error-to-test`. See [releas
 
 ## Run locally
 
-Requires Node.js 24.8+. From this directory:
+Requires Node.js 24.22.1 or newer within Node 24, or Node.js 26.12.1 or newer, with the [October 2026 security updates](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). From this directory, if you use nvm:
+
+```sh
+nvm install
+nvm use
+```
+
+Then run:
 
 ```sh
 npm ci
@@ -26,6 +33,8 @@ npm run check
 node bin/error-to-test.mjs --help
 npm run demo
 ```
+
+Install or upgrade Node.js separately; `npm install` does not upgrade the runtime. npm normally warns about an unsupported `engines` version unless `engine-strict` is enabled.
 
 Each demo run saves its results in a new `.error-to-test/run-*` directory and prints the report path.
 
