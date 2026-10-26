@@ -82,6 +82,19 @@ test('a JSON bundle verifies the original BOM bytes and rejects a stripped sourc
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('a profile BOM bundle verifies the original profile and rejects a stripped profile', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-profile-bom-'));
+  try {
+    const input = await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8');
+    const profile = await readFile(new URL('../examples/profile.json', import.meta.url), 'utf8');
+    const bomProfile = `\uFEFF${profile}`;
+    const out = join(temp, 'result');
+    await writeBundle(out, analyzeErrors(input, { profile: bomProfile }));
+    assert.deepEqual(await verifyBundle(out, { input, profile: bomProfile }), { suite: true, reviewed: false, sourceChecked: true });
+    await assert.rejects(verifyBundle(out, { input, profile }), /STALE_BUNDLE: Profile changed/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 for (const name of ['analysis.json', 'report.md', 'flows/error-to-test.md', 'cases/error-to-test.json']) {
   test(`verification rejects altered ${name}`, async () => {
     const temp = await mkdtemp(join(tmpdir(), 'error-to-test-stale-'));

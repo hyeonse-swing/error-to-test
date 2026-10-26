@@ -15,7 +15,7 @@ export function analyzeErrors(content: string, options: AnalyzeOptions = {}): An
   const profileSource = typeof rawProfile === 'string' ? rawProfile : rawProfile === undefined ? undefined : JSON.stringify(rawProfile);
   if (typeof rawProfile === 'string') {
     if (Buffer.byteLength(rawProfile) > 1024 * 1024) throw new Error('The profile must be 1 MiB or smaller.');
-    try { rawProfile = JSON.parse(rawProfile); } catch { throw new Error('The profile is not valid JSON.'); }
+    try { rawProfile = JSON.parse(rawProfile.replace(/^\uFEFF/, '')); } catch { throw new Error('The profile is not valid JSON.'); }
   }
   const profile = rawProfile === undefined ? undefined : parseProfile(rawProfile);
   const input = parseInput(content, options);
