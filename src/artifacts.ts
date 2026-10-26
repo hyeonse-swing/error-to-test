@@ -26,6 +26,20 @@ export function renderReport(analysis: Analysis): string {
     lines.push(`## ${group.id}`, '',
       `Records: ${group.count} · Observed page views: ${group.viewCount} · Last observed: ${group.lastOccurredAt ?? 'unknown'}`, '',
       literal(`${group.project} / ${group.environment} / ${group.release} / ${group.runtime}\n${group.type} ${group.pagePath}\n${group.message}`), '');
+    const stacks: string[] = [];
+    const seenStacks = new Set<string>();
+    const seenComponentStacks = new Set<string>();
+    for (const evidence of group.evidence) {
+      if (evidence.stack?.trim() && !seenStacks.has(evidence.stack)) {
+        seenStacks.add(evidence.stack);
+        stacks.push('Error stack:', literal(evidence.stack), '');
+      }
+      if (evidence.componentStack?.trim() && !seenComponentStacks.has(evidence.componentStack)) {
+        seenComponentStacks.add(evidence.componentStack);
+        stacks.push('React component stack:', literal(evidence.componentStack), '');
+      }
+    }
+    if (stacks.length) lines.push('Observed stack traces (representative evidence):', '', ...stacks);
     for (const candidate of analysis.candidates.filter(item => item.groupId === group.id)) {
       lines.push(`### ${candidate.id} · ${candidate.state}`, '', literal(candidate.title), '', 'Observed facts:', literal(candidate.facts.join('\n')),
         '', 'Reported reproduction:', literal(candidate.reproduction.join('\n') || 'Not supplied'),

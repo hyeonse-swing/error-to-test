@@ -36,6 +36,10 @@ test('report includes submitted manual reproduction, setup, and proposed steps i
 test('report leaves missing context explicit and safely fences submitted text', () => {
   const analysis = analyzeErrors('Error: an observed failure');
   const empty = renderReport(analysis);
+  assert.ok(!empty.includes('Observed stack traces (representative evidence):'));
+  analysis.groups[0]!.evidence[0]!.stack = ' \n  ';
+  analysis.groups[0]!.evidence[0]!.componentStack = '\t';
+  assert.ok(!renderReport(analysis).includes('Observed stack traces (representative evidence):'));
   for (const heading of ['Reported reproduction:', 'Preconditions:', 'Proposed test steps:']) {
     assert.ok(empty.includes(`${heading}\n\`\`\`text\nNot supplied\n\`\`\``));
   }
@@ -51,6 +55,47 @@ test('report leaves missing context explicit and safely fences submitted text', 
   assert.ok(!report.includes('secret123'));
   assert.ok(!report.includes('secret456'));
   assert.ok(!report.includes('viewer@example.com'));
+});
+
+test('report shows distinct sampled stacks once per field and verifies the bundle', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-stacks-'));
+  try {
+    const first = 'TypeError\n    at render (/app.js:10:2)\n    at ParentA (/a.js:1:1)';
+    const second = 'TypeError\n    at render (/app.js:10:2)\n    at ParentB (/b.js:2:2)';
+    const react = '    at Widget (/Widget.tsx:4:2)';
+    const source = JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [
+      { id: 'one', message: 'TypeError: broken item', type: 'javascript', stack: first, componentStack: react },
+      { id: 'two', message: 'TypeError: broken item', type: 'javascript', stack: first, componentStack: react },
+      { id: 'three', message: 'TypeError: broken item', type: 'javascript', stack: second, componentStack: react },
+    ] });
+    const analysis = analyzeErrors(source);
+    assert.equal(analysis.groups.length, 1);
+    const report = renderReport(analysis);
+    assert.equal(report.split('Observed stack traces (representative evidence):').length - 1, 1);
+    assert.equal(report.split(first).length - 1, 1);
+    assert.equal(report.split(second).length - 1, 1);
+    assert.equal(report.split(react).length - 1, 1);
+    assert.equal(report.split('Error stack:').length - 1, 2);
+    assert.equal(report.split('React component stack:').length - 1, 1);
+    assert.ok(report.indexOf('Observed stack traces (representative evidence):') < report.indexOf('### '));
+    const out = join(temp, 'result');
+    await writeBundle(out, analysis);
+    assert.deepEqual(await verifyBundle(out, { input: source }), { suite: true, reviewed: false, sourceChecked: true });
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('report redacts and fences untrusted stack evidence', () => {
+  const analysis = analyzeErrors('Error: an observed failure');
+  const evidence = analysis.groups[0]!.evidence[0]!;
+  evidence.stack = 'Error ```\n token=secret123 viewer@example.com https://user:pass@example.com/private?q=secret';
+  evidence.componentStack = '```\n at Widget token=secret456';
+  const report = renderReport(analysis);
+  assert.match(report, /Error stack:\n````text\nError ```\n token=\[redacted\] \[redacted-email\]/);
+  assert.match(report, /React component stack:\n````text\n```\n at Widget token=\[redacted\]/);
+  assert.ok(report.includes('https://example.com/private'));
+  for (const secret of ['secret123', 'secret456', 'viewer@example.com', 'user:pass', '?q=secret']) {
+    assert.ok(!report.includes(secret));
+  }
 });
 
 test('bundle writes Flow QA layout, verifies source bytes and preserves existing output', async () => {
