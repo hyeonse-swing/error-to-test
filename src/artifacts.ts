@@ -13,8 +13,11 @@ function literal(value: string): string {
   return `${fence}text\n${safe}\n${fence}`;
 }
 export function renderReport(analysis: Analysis): string {
+  const draftCandidates = analysis.candidates.filter(candidate => candidate.state === 'draft').length;
+  const needsContextCandidates = analysis.candidates.filter(candidate => candidate.state === 'needs-context').length;
   const lines = ['# Error to Test analysis', '',
     `Groups: ${analysis.groups.length} · TC candidates: ${analysis.candidates.length}`,
+    `Draft TC candidates: ${draftCandidates} · Need context: ${needsContextCandidates}`,
     `Input: ${analysis.coverage.kind} · Count meaning: ${analysis.coverage.frequency}`,
     `Partial export: ${analysis.coverage.partial ? 'yes' : 'no'} · Retention coverage: unknown`,
     `Duplicate records: ${analysis.coverage.duplicates} · Filtered records: ${analysis.coverage.filtered}`, '',

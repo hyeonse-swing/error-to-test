@@ -84,6 +84,44 @@ test('report shows distinct sampled stacks once per field and verifies the bundl
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('report summary counts candidate states in fixture, empty, and manual analyses', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-summary-'));
+  try {
+    const input = await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8');
+    const profile = await readFile(new URL('../examples/profile.json', import.meta.url), 'utf8');
+    const analysis = analyzeErrors(input, { profile });
+    const summary = 'Groups: 3 · TC candidates: 3\nDraft TC candidates: 2 · Need context: 1';
+    assert.ok(renderReport(analysis).includes(summary));
+
+    const out = join(temp, 'result');
+    await writeBundle(out, analysis);
+    const bundleReport = await readFile(join(out, 'report.md'), 'utf8');
+    assert.ok(bundleReport.includes(summary));
+    assert.deepEqual(await verifyBundle(out, { input, profile }), { suite: true, reviewed: false, sourceChecked: true });
+
+    const empty = analyzeErrors(input, { page: '/not-in-the-fixture' });
+    assert.equal(empty.groups.length, 0);
+    assert.equal(empty.candidates.length, 0);
+    assert.ok(renderReport(empty).includes('Groups: 0 · TC candidates: 0\nDraft TC candidates: 0 · Need context: 0'));
+
+    const manual = analyzeErrors('Error: an observed failure');
+    assert.equal(manual.candidates.length, 1);
+    assert.equal(manual.candidates[0]!.state, 'needs-context');
+    assert.ok(renderReport(manual).includes('Groups: 1 · TC candidates: 1\nDraft TC candidates: 0 · Need context: 1'));
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('report summary counts matching profile scenarios as candidates, not groups', async () => {
+  const input = await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8');
+  const profile = JSON.parse(await readFile(new URL('../examples/profile.json', import.meta.url), 'utf8'));
+  profile.scenarios[1].match = profile.scenarios[0].match;
+  const analysis = analyzeErrors(input, { profile, page: 'http://127.0.0.1:4179/items' });
+  assert.equal(analysis.groups.length, 1);
+  assert.equal(analysis.candidates.length, 2);
+  assert.ok(analysis.candidates.every((candidate) => candidate.state === 'draft'));
+  assert.ok(renderReport(analysis).includes('Groups: 1 · TC candidates: 2\nDraft TC candidates: 2 · Need context: 0'));
+});
+
 test('report redacts and fences untrusted stack evidence', () => {
   const analysis = analyzeErrors('Error: an observed failure');
   const evidence = analysis.groups[0]!.evidence[0]!;
