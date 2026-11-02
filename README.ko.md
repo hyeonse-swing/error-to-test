@@ -34,7 +34,15 @@ node bin/error-to-test.mjs analyze --input examples/error.txt --page /items --ru
 node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --out .error-to-test/example
 ```
 
-결과는 `analysis.json`, `report.md`, `flows/error-to-test.md`, `cases/error-to-test.json`, `provenance.json`입니다. 빈 조회 결과에는 suite를 만들지 않습니다. 출력 폴더는 매번 새 경로를 지정해야 합니다.
+결과는 `analysis.json`, `report.md`, `flows/error-to-test.md`, `cases/error-to-test.json`, `provenance.json`입니다. 선택된 TC 후보가 없으면 suite를 만들지 않습니다. 출력 폴더는 매번 새 경로를 지정해야 합니다.
+
+`--min-count N`으로 입력에 N건 이상 있는 오류 묶음만 TC 후보로 만들 수 있습니다. 범위는 1~10,000이며 기본값은 1입니다. 중복 제거·날짜 필터 적용 후 건수를 기준으로 고르고, `--top`은 그중 순위가 높은 묶음 수를 제한합니다. 기준 미만의 묶음도 `analysis.json`과 `report.md`에 남으며, 제외가 발생하면 보고서에 선택 기준을 표시합니다. 이 건수는 입력에 포함된 수집 이벤트·제출 보고서 수입니다.
+
+```sh
+error-to-test analyze --input errors.json --min-count 3 --top 10 --out ./recurring-errors
+```
+
+JavaScript API에서는 `analyzeErrors(content, { minCount: 3, top: 10 })`으로 같은 기준을 적용합니다.
 
 `report.md` 상단에서 TC 초안 수와 추가 정보가 필요한 TC 수를 확인할 수 있습니다. 초안도 실행 전에 검토해야 합니다. 오류 묶음·수집 건수와 함께 대표 로그의 오류·React 컴포넌트 스택, 재현 방법·사전 조건·테스트 단계·부족한 정보도 표시합니다. 같은 스택은 한 번만 표시하며, 전체 로그의 모든 스택을 나열하지는 않습니다. 재현 단계와 정상 기대 결과, 명시적인 assertion이 없으면 질문이 있는 TC를 생성합니다. 직접 입력한 보고서에는 실제 발생 시각·사용자 수를 만들어 넣지 않습니다. 수집 건수도 실제 발생률을 뜻하지 않으며, 원본 내보내기의 일부 데이터 표시를 유지합니다.
 

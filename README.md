@@ -61,6 +61,12 @@ Accepts Browser Error Log v1 `{schemaVersion: 1, partial?: boolean, events: [...
 
 Grouping is deterministic and separates project, environment, release, runtime, page path, error message/name, and source location or HTTP method/path/status. Similar messages do not establish the same root cause. Counts mean **captured events** or **submitted reports**, not actual occurrence rates or affected users. Collection retention is unknown; imported `partial` status is preserved. TC selection defaults to the first 100 ranked groups; all groups remain in the analysis. More than 100 generated cases must be narrowed with `--top` or a smaller profile.
 
+Use `--min-count N` (1..10,000; default 1) to generate TCs only for groups with at least N supplied records after deduplication and date filtering. `--top` then limits the remaining ranked groups. Groups below the threshold remain in `analysis.json` and `report.md`; the report explains any exclusions. If no groups qualify, no suite is generated.
+
+```sh
+error-to-test analyze --input errors.json --min-count 3 --top 10 --out ./recurring-errors
+```
+
 ## Confirm the intended behavior
 
 See [examples/profile.json](examples/profile.json). Profiles use `schemaVersion: "error-to-test/profile-1"`, a name, and up to 100 scenarios. Each scenario has a unique ID, title, at least one match predicate, a requirement, its `expectedSource`, and explicit steps. Set `setupConfirmed: true` only after confirming how preconditions are established. Preconditions are descriptions; this package does not prepare accounts or data.
@@ -74,7 +80,7 @@ Generated files (Flow QA source is limited to 128 KB; suite JSON to 512 KiB):
 - `analysis.json`: coverage, ranked groups, safe representative evidence, full-source context checks, and TC candidates.
 - `report.md`: human-readable analysis with draft and needs-context TC totals, unique error and React component stacks from representative evidence, reported reproduction, preconditions, proposed test steps, and missing context.
 - `flows/error-to-test.md`: observed facts, requirements, steps, and questions.
-- `cases/error-to-test.json`: Flow QA `suite-1` (omitted when no records match).
+- `cases/error-to-test.json`: Flow QA `suite-1` (omitted when no TC candidates are selected).
 - `provenance.json`: source/profile/analysis/report/flow/suite hashes and event → group → case mappings.
 
 Default suites have a review question on every case. Read the artifacts, confirm the profile/steps, then repeat analysis to **another output directory** with `--reviewed`. This acknowledges review; missing context still blocks execution. No analysis command runs the browser.
@@ -102,6 +108,8 @@ await writeBundle('./new-result', analysis);
 ```
 
 Analysis is deterministic and has no runtime dependencies. Optional model-assisted drafting, collecting new interaction breadcrumbs, direct collector APIs, and a dedicated web input screen are later extensions. Browser/WebView logs can be analyzed; native or WebView execution is not established by a log and remains blocked until the correct context is supplied.
+
+The API supports the same selection with `analyzeErrors(content, { minCount: 3, top: 10 })`.
 
 After a Flow QA run, associate its normalized report with the exact exported suite:
 

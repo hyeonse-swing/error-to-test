@@ -81,3 +81,36 @@ test('invalid and ambiguous CLI input fails with no output and redacted errors',
   assert.equal(run(['analyze', '--error', 'x', '--unknown-flag']).status, 1);
   assert.equal(run(['--help']).status, 0);
 });
+
+test('min-count produces a verifiable bundle without a suite when no group qualifies', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-min-count-'));
+  try {
+    const out = join(temp, 'filtered');
+    const result = run(['analyze', '--error', 'Error: observed failure', '--min-count', '2', '--out', out]);
+    assert.equal(result.status, 0, result.stderr);
+    const analysis = JSON.parse(await readFile(join(out, 'analysis.json'), 'utf8'));
+    assert.equal(analysis.groups.length, 1);
+    assert.equal(analysis.candidates.length, 0);
+    assert.match(await readFile(join(out, 'report.md'), 'utf8'), /at least 2 supplied records per group/);
+    await assert.rejects(stat(join(out, 'cases/error-to-test.json')), { code: 'ENOENT' });
+    const verified = run(['verify', out]);
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.match(verified.stdout, /Suite: none/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('CLI min-count validates through analysis before creating output', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-min-count-invalid-'));
+  try {
+    for (const value of ['0', '-1', '10001', '1.5', 'NaN', 'Infinity']) {
+      const out = join(temp, value);
+      const result = run(['analyze', '--error', 'Error: observed failure', `--min-count=${value}`, '--out', out]);
+      assert.equal(result.status, 1, `${value}: ${result.stderr}`);
+      assert.match(result.stderr, /minCount must be an integer between 1 and 10000/);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+    const valid = run(['analyze', '--error', 'Error: observed failure', '--min-count', '10000', '--out', join(temp, 'valid')]);
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.match(run(['--help']).stdout, /after dedup\/date filtering/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});

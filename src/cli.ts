@@ -33,7 +33,8 @@ Options:
   --expected TEXT        Reported intended result (--error only)
   --expected-source TEXT Expected-result source (--error only)
   --from ISO --to ISO    Filter observed timestamps; undated reports are excluded
-  --top N                Generate TCs for the first N ranked groups (1..100)
+  --min-count N          Select groups with at least N records after dedup/date filtering (1..10000)
+  --top N                Generate TCs for the first N eligible ranked groups (1..100; after --min-count)
   --out DIRECTORY        New directory; existing files are never overwritten
   --reviewed             Acknowledge review; unresolved questions still block cases
   --report FILE          Normalized Flow QA report (link-run only)
@@ -60,7 +61,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string' }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -126,6 +127,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     format: inputFormat, ...(values.profile ? { profile: await readBoundedFile(resolve(values.profile), 1024 * 1024) } : {}),
     project: values.project, environment: values.environment, release: values.release, page: values.page, type: values.type as EventType | undefined, runtime: values.runtime as Runtime | undefined,
     from: values.from, to: values.to, ...(values.top !== undefined ? { top: Number(values.top) } : {}),
+    ...(values['min-count'] !== undefined ? { minCount: Number(values['min-count']) } : {}),
   });
   const out = resolve(values.out ?? `.error-to-test/run-${Date.now()}-${randomUUID().slice(0, 8)}`);
   const files = await writeBundle(out, analysis, { reviewed: values.reviewed });
