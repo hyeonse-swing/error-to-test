@@ -15,7 +15,7 @@ try {
   assert.ok(packed[0].files.some(file => file.path === 'docs/releases.md'));
   await writeFile(join(temp, 'package.json'), '{"type":"module","private":true}\n');
   execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', join(temp, 'cache'), join(temp, packed[0].filename)], { cwd: temp, stdio: 'pipe', env: npmEnvironment });
-  const consumer = `import assert from 'node:assert/strict';\nimport { analyzeErrors, exportFlowQa } from '@ihyeon/error-to-test';\nconst analysis=analyzeErrors('TypeError: missing item');\nassert.equal(analysis.candidates.length,1);\nassert.ok(exportFlowQa(analysis).suite.cases[0].questions.length);\n`;
+  const consumer = `import assert from 'node:assert/strict';\nimport { analyzeErrors, createProfileTemplate, exportFlowQa } from '@ihyeon/error-to-test';\nconst analysis=analyzeErrors('TypeError: missing item');\nassert.equal(analysis.candidates.length,1);\nassert.ok(exportFlowQa(analysis).suite.cases[0].questions.length);\nconst profile=createProfileTemplate(analysis);\nassert.equal(profile.scenarios[0].match.groupId,analysis.groups[0].id);\nassert.equal(profile.scenarios[0].requirement,'');\nassert.equal(profile.scenarios[0].setupConfirmed,false);\n`;
   await writeFile(join(temp, 'consumer.mjs'), consumer);
   execFileSync(process.execPath, ['consumer.mjs'], { cwd: temp, stdio: 'pipe' });
   const bin = execFileSync(join(temp, 'node_modules/.bin/error-to-test'), ['--help'], { cwd: temp, encoding: 'utf8' });
@@ -26,6 +26,30 @@ try {
     assert.equal(output, `${installedManifest.version}\n`);
   }
   const installedRoot = join(temp, 'node_modules/@ihyeon/error-to-test');
+  const runCli = args => execFileSync(join(temp, 'node_modules/.bin/error-to-test'), args, { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  const errorFile = join(temp, 'observed-error.txt');
+  const initial = join(temp, 'initial');
+  const profileFile = join(temp, 'review-profile.json');
+  const reviewed = join(temp, 'with-profile');
+  await writeFile(errorFile, 'TypeError: missing item\n    at render (/app.js:10:2)');
+  runCli(['analyze', '--input', errorFile, '--page', '/items', '--runtime', 'browser', '--out', initial]);
+  runCli(['init-profile', initial, '--out', profileFile]);
+  const profile = JSON.parse(await readFile(profileFile, 'utf8'));
+  assert.equal(profile.scenarios.length, 1);
+  assert.equal(profile.scenarios[0].expectedSource, '');
+  assert.deepEqual(profile.scenarios[0].steps, [{ type: 'open', path: '/items' }]);
+  Object.assign(profile.scenarios[0], {
+    requirement: 'The empty state appears', expectedSource: 'Demo requirement', setupConfirmed: true, questions: [],
+    steps: [{ type: 'open', path: '/items' }, { type: 'act', instruction: 'Open the missing item' },
+      { type: 'assertVisible', locator: { by: 'role', value: 'status' }, visible: true }],
+  });
+  await writeFile(profileFile, JSON.stringify(profile));
+  runCli(['analyze', '--input', errorFile, '--page', '/items', '--runtime', 'browser', '--profile', profileFile, '--out', reviewed]);
+  const refined = JSON.parse(await readFile(join(reviewed, 'analysis.json'), 'utf8'));
+  assert.equal(refined.candidates[0].state, 'draft');
+  const refinedSuite = JSON.parse(await readFile(join(reviewed, 'cases/error-to-test.json'), 'utf8'));
+  assert.ok(refinedSuite.cases[0].questions.some(question => question.includes('Review this draft')));
+  assert.match(runCli(['verify', reviewed, '--input', errorFile, '--profile', profileFile]), /Suite: present; review: pending; original input: checked/);
   const reports = [];
   for (let run = 0; run < 2; run++) {
     const output = execFileSync('npm', ['run', 'demo', '--prefix', installedRoot], { cwd: temp, encoding: 'utf8', env: npmEnvironment, timeout: 30_000 });
@@ -37,5 +61,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile workflow, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

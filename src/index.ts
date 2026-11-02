@@ -5,4 +5,5 @@ export { createCandidates, parseProfile } from './candidates.ts';
 export { exportFlowQa } from './exports/flow-qa.ts';
 export { writeBundle, verifyBundle, renderReport } from './artifacts.ts';
 export { linkFlowQaReport } from './results.ts';
+export { createProfileTemplate } from './profile-template.ts';
 export type * from './types.ts';

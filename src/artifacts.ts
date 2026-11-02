@@ -86,7 +86,10 @@ export async function readBoundedFile(path: string, maxBytes = 10 * 1024 * 1024)
   if (Buffer.byteLength(content) > maxBytes) throw new Error('Input exceeded the size limit while reading.');
   return content;
 }
-export async function verifyBundle(directory: string, options: { input?: string; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
+export async function readVerifiedBundle(directory: string, options: { input?: string; profile?: string } = {}): Promise<{
+  analysis: Record<string, unknown>;
+  verification: { suite: boolean; reviewed: boolean; sourceChecked: boolean };
+}> {
   const root = resolve(directory);
   const parse = (content: string, label: string): Record<string, unknown> => {
     try { return record(JSON.parse(content), label); } catch { throw new Error(`${label} is not a valid JSON object.`); }
@@ -118,5 +121,8 @@ export async function verifyBundle(directory: string, options: { input?: string;
   }
   if (options.input !== undefined && hash(options.input) !== text(provenance.inputSha256, 'provenance.inputSha256')) throw new Error('STALE_BUNDLE: Input changed since analysis.');
   if (options.profile !== undefined && hash(options.profile) !== provenance.profileSha256) throw new Error('STALE_BUNDLE: Profile changed since analysis.');
-  return { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined };
+  return { analysis, verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
+}
+export async function verifyBundle(directory: string, options: { input?: string; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
+  return (await readVerifiedBundle(directory, options)).verification;
 }

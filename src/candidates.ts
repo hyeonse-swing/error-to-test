@@ -50,7 +50,7 @@ export function parseProfile(raw: unknown): AppProfile {
     const label = `profile.scenarios[${index}]`;
     const rule = record(rawRule, label);
     const match = record(rule.match, `${label}.match`);
-    const fields = ['type', 'messageIncludes', 'pagePath', 'networkPath', 'environment', 'release', 'runtime'] as const;
+    const fields = ['groupId', 'type', 'messageIncludes', 'pagePath', 'networkPath', 'environment', 'release', 'runtime'] as const;
     if (!fields.some((field) => match[field] !== undefined)) throw new Error(`${label}.match needs at least one predicate.`);
     const type = optionalText(match.type, `${label}.match.type`);
     const runtime = optionalText(match.runtime, `${label}.match.runtime`);
@@ -64,6 +64,7 @@ export function parseProfile(raw: unknown): AppProfile {
       id: identifier(rule.id, `${label}.id`),
       title: profileText(rule.title, `${label}.title`),
       match: {
+        ...(match.groupId !== undefined ? { groupId: identifier(match.groupId, `${label}.match.groupId`) } : {}),
         ...(type ? { type: type as ScenarioRule['match']['type'] } : {}),
         ...(match.messageIncludes !== undefined ? { messageIncludes: profileText(match.messageIncludes, `${label}.match.messageIncludes`) } : {}),
         ...(page ? { pagePath: page } : {}),
@@ -91,7 +92,8 @@ function confirmed(value: unknown, label: string): boolean {
 
 function matches(rule: ScenarioRule, group: IssueGroup): boolean {
   const match = rule.match;
-  return (!match.type || match.type === group.type)
+  return (match.groupId === undefined || match.groupId === group.id)
+    && (!match.type || match.type === group.type)
     && (!match.messageIncludes || group.message.includes(match.messageIncludes))
     && (!match.pagePath || match.pagePath === group.pagePath)
     && (!match.environment || match.environment === group.environment)

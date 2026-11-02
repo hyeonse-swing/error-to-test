@@ -80,7 +80,7 @@ export interface IssueGroup {
 export interface ScenarioRule {
   id: string;
   title: string;
-  match: { type?: EventType; messageIncludes?: string; pagePath?: string; networkPath?: string; environment?: string; release?: string; runtime?: Runtime };
+  match: { groupId?: string; type?: EventType; messageIncludes?: string; pagePath?: string; networkPath?: string; environment?: string; release?: string; runtime?: Runtime };
   requirement: string;
   expectedSource: string;
   preconditions: string[];

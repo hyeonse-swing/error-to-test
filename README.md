@@ -73,6 +73,23 @@ See [examples/profile.json](examples/profile.json). Profiles use `schemaVersion:
 
 Supported web steps match Flow QA: `open`, `click`, `fill`, `act`, `assertVisible`, `assertText`, `assertUrl`, and `assertAgent`. Several matching rules produce several traceable candidates. Conflicts/questions in any original report are checked before representative evidence is sampled and stay blocked even when a profile matches.
 
+### Start a profile from an analysis
+
+Generate an editable profile from a verified analysis bundle instead of writing its structure and match rules by hand:
+
+```sh
+error-to-test analyze --input errors.json --min-count 3 --out ./initial-analysis
+error-to-test init-profile ./initial-analysis --out ./review-profile.json
+# Edit review-profile.json using report.md and your confirmed app requirements.
+error-to-test analyze --input errors.json --min-count 3 --profile ./review-profile.json --out ./review-analysis
+```
+
+The template contains one scenario per selected error group, even when several candidates refer to that group. Each scenario uses an exact `match.groupId`, so a different source location, release, or other grouping boundary cannot receive the scenario just because its message and page look similar. Reuse the original input and the same analysis filters/manual metadata. New or changed groups require their own review.
+
+For each scenario, fill `requirement` and `expectedSource`, establish `preconditions`, and supply explicit reproduction actions and an observable assertion in `steps`. Only a safe observed page path is prefilled as an `open` step. No actions or expected outcomes are inferred. Set `setupConfirmed: true` after checking setup, and remove the template question after answering it. The initial empty requirement/source deliberately fail profile validation; setup, runtime, source conflicts, missing steps, and remaining questions still block incomplete cases. A complete draft still needs the usual `--reviewed` acknowledgement before execution.
+
+`init-profile` requires a new output file, refuses stale bundles and empty candidate selections, and never overwrites an existing file. The original analysis artifacts remain unchanged. The API equivalent is `createProfileTemplate(analysis)`; its result is an incomplete `error-to-test/profile-1` object for editing, not an execution-ready profile.
+
 ## Review and use Flow QA
 
 Generated files (Flow QA source is limited to 128 KB; suite JSON to 512 KiB):

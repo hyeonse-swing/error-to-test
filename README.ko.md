@@ -48,6 +48,21 @@ JavaScript API에서는 `analyzeErrors(content, { minCount: 3, top: 10 })`으로
 
 기본 suite는 검토 질문으로 실행이 차단됩니다. TC와 프로필을 확인한 뒤 다른 출력 폴더에 `--reviewed`로 다시 생성하면 검토 질문만 제거됩니다. 나머지 질문은 그대로 실행을 차단합니다. 프로필의 `setupConfirmed`는 준비 조건을 확인했다는 표시이며, 계정·데이터를 자동으로 준비하는 기능은 아닙니다.
 
+프로필 JSON은 기존 분석 결과에서 틀을 자동으로 만들 수 있습니다.
+
+```sh
+error-to-test analyze --input errors.json --min-count 3 --out ./initial-analysis
+error-to-test init-profile ./initial-analysis --out ./review-profile.json
+# report.md와 확인한 앱 요구사항을 보며 review-profile.json 수정
+error-to-test analyze --input errors.json --min-count 3 --profile ./review-profile.json --out ./review-analysis
+```
+
+선택된 오류 묶음마다 규칙을 하나씩 만들고 `match.groupId`로 정확히 연결합니다. 메시지·페이지가 같아도 소스 위치나 릴리스가 다른 묶음에 규칙이 퍼지지 않습니다. 같은 원본 입력과 필터·수동 메타데이터를 유지해서 다시 분석하세요. 새로 생기거나 달라진 묶음은 별도 검토가 필요합니다.
+
+각 규칙의 `requirement`와 `expectedSource`를 채우고, `preconditions`와 명시적인 재현 동작·assertion을 `steps`에 작성하세요. 확인된 관측 페이지 경로만 `open` 단계로 미리 넣으며, 동작이나 기대 결과는 추측하지 않습니다. 준비 조건을 확인한 뒤 `setupConfirmed: true`로 바꾸고, 생성된 질문에 답한 뒤 해당 질문을 제거하세요. 처음 생성한 빈 기대 결과·출처는 검증에서 거부됩니다. 나머지 질문, 원본의 충돌, 실행 환경 확인과 기존 검토 게이트도 계속 적용됩니다.
+
+`init-profile`은 검증에 통과한 번들만 읽고 새 파일에 저장합니다. 수정된 번들, 선택된 TC가 없는 결과, 기존 출력 파일은 거부합니다. 원래 분석 산출물을 덮어쓰지 않습니다. API의 `createProfileTemplate(analysis)`도 편집용 `error-to-test/profile-1` 객체를 만들며, 완성된 실행 프로필을 의미하지 않습니다.
+
 ```sh
 node bin/error-to-test.mjs verify .error-to-test/example --input examples/errors.json --profile examples/profile.json
 node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --reviewed --out .error-to-test/reviewed

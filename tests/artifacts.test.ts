@@ -4,7 +4,10 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { analyzeErrors } from '../src/analysis.ts';
-import { renderReport, verifyBundle, writeBundle } from '../src/artifacts.ts';
+import { jsonText, readVerifiedBundle, renderReport, verifyBundle, writeBundle } from '../src/artifacts.ts';
+import { createProfileTemplate } from '../src/profile-template.ts';
+import { hash } from '../src/validation.ts';
+import type { Analysis } from '../src/types.ts';
 
 test('report includes submitted manual reproduction, setup, and proposed steps in a verified bundle', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-report-'));
@@ -150,6 +153,29 @@ test('bundle writes Flow QA layout, verifies source bytes and preserves existing
     const suite = JSON.parse(await readFile(join(out, 'cases/error-to-test.json'), 'utf8'));
     assert.equal(suite.source.file, 'flows/error-to-test.md');
     assert.ok(suite.cases.every((item: { questions: string[] }) => item.questions.length));
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('verified analysis snapshot stays bound to its bundle after an analysis and provenance replacement', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-verified-snapshot-'));
+  try {
+    const out = join(temp, 'result');
+    await writeBundle(out, analyzeErrors('Error: original observation', { page: '/items', runtime: 'browser' }));
+    const snapshot = await readVerifiedBundle(out);
+    assert.deepEqual(snapshot.verification, { suite: true, reviewed: false, sourceChecked: false });
+    const originalTemplate = createProfileTemplate(snapshot.analysis as unknown as Analysis);
+    const alteredAnalysis = JSON.parse(await readFile(join(out, 'analysis.json'), 'utf8'));
+    alteredAnalysis.groups[0].message = 'Error: replaced observation';
+    alteredAnalysis.source.sha256 = '0'.repeat(64);
+    const alteredText = jsonText(alteredAnalysis);
+    const alteredProvenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    alteredProvenance.analysisSha256 = hash(alteredText);
+    await writeFile(join(out, 'analysis.json'), alteredText);
+    await writeFile(join(out, 'provenance.json'), jsonText(alteredProvenance));
+    assert.equal(hash(await readFile(join(out, 'analysis.json'), 'utf8')), alteredProvenance.analysisSha256);
+    assert.deepEqual(createProfileTemplate(snapshot.analysis as unknown as Analysis), originalTemplate);
+    assert.match(originalTemplate.scenarios[0]!.title, /original observation/);
+    await assert.rejects(verifyBundle(out), /STALE_BUNDLE/);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 

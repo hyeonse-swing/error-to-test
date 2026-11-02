@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCandidates, parseProfile } from '../src/candidates.ts';
 import { exportFlowQa } from '../src/exports/flow-qa.ts';
-import type { ErrorObservation, IssueGroup } from '../src/types.ts';
+import type { AppProfile, ErrorObservation, IssueGroup } from '../src/types.ts';
 
 const action = { type: 'act', instruction: 'Submit the form.' } as const;
 const assertion = { type: 'assertVisible', locator: { by: 'role', value: 'status' }, visible: true } as const;
@@ -43,6 +43,33 @@ test('profile requires a match predicate and produces one stable candidate per m
   assert.deepEqual(candidates.map((candidate) => candidate.ruleId), ['a', 'b']);
   assert.notEqual(candidates[0]?.id, candidates[1]?.id);
   assert.ok(candidates.every((candidate) => candidate.state === 'draft'));
+});
+
+test('groupId is a valid exact predicate and combines with other match fields', () => {
+  const other = { ...group, id: 'group-2', project: 'other', release: 'r2' };
+  const scenario = { id: 'target', title: 'Target', match: { groupId: group.id, pagePath: '/checkout', release: 'r1' }, requirement: 'Success', expectedSource: 'spec', setupConfirmed: true, preconditions: ['signed in'], steps };
+  const profile = parseProfile({ schemaVersion: 'error-to-test/profile-1', name: 'shop', scenarios: [scenario] });
+  assert.equal(profile.scenarios[0]?.match.groupId, group.id);
+  const matched = createCandidates([group, other], profile);
+  assert.equal(matched[0]?.ruleId, 'target');
+  assert.equal(matched[1]?.ruleId, undefined);
+  assert.equal(createCandidates([{ ...group, release: 'r2' }], profile)[0]?.ruleId, undefined);
+  assert.throws(() => parseProfile({ schemaVersion: 'error-to-test/profile-1', name: 'shop', scenarios: [{ ...scenario, match: { groupId: '' } }] }), /groupId/);
+  assert.throws(() => parseProfile({ schemaVersion: 'error-to-test/profile-1', name: 'shop', scenarios: [{ ...scenario, match: { groupId: 'bad/id' } }] }), /compatible ID/);
+});
+
+test('direct createCandidates call never treats an empty groupId as a wildcard', () => {
+  const profile: AppProfile = {
+    schemaVersion: 'error-to-test/profile-1', name: 'shop', scenarios: [{
+      id: 'empty-group', title: 'Accidental match', match: { groupId: '' },
+      requirement: 'Success', expectedSource: 'spec', preconditions: ['signed in'], setupConfirmed: true,
+      questions: [], steps,
+    }],
+  };
+  const unreviewed = { ...group, evidence: [{ ...observation, expected: undefined, expectedSource: undefined, steps: [], reproduction: [] }] };
+  const candidates = createCandidates([unreviewed, { ...unreviewed, id: 'group-2' }], profile);
+  assert.equal(candidates.length, 2);
+  assert.ok(candidates.every((candidate) => candidate.ruleId === undefined && candidate.state === 'needs-context'));
 });
 
 test('webview evidence stays blocked and missing path is never invented', () => {

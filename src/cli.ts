@@ -1,12 +1,13 @@
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { analyzeErrors } from './analysis.ts';
-import { readBoundedFile, verifyBundle, writeBundle } from './artifacts.ts';
+import { jsonText, readBoundedFile, readVerifiedBundle, verifyBundle, writeBundle } from './artifacts.ts';
+import { createProfileTemplate } from './profile-template.ts';
 import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
-import type { EventType, Runtime } from './types.ts';
+import type { Analysis, EventType, Runtime } from './types.ts';
 
 const help = `Error to Test — local error analysis and regression TC drafts
 
@@ -15,6 +16,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test analyze --error "TypeError: item is undefined" --page /items --out new-directory
   cat error.txt | error-to-test analyze --input - --format text --out new-directory
   error-to-test verify new-directory [--input errors.json] [--profile profile.json]
+  error-to-test init-profile new-directory --out profile.json
   error-to-test link-run new-directory --report path/to/qa-report.json
 
 Options:
@@ -35,7 +37,8 @@ Options:
   --from ISO --to ISO    Filter observed timestamps; undated reports are excluded
   --min-count N          Select groups with at least N records after dedup/date filtering (1..10000)
   --top N                Generate TCs for the first N eligible ranked groups (1..100; after --min-count)
-  --out DIRECTORY        New directory; existing files are never overwritten
+  --out DIRECTORY        New analyze directory; existing files are never overwritten
+  --out FILE             New init-profile JSON file; existing files are never overwritten
   --reviewed             Acknowledge review; unresolved questions still block cases
   --report FILE          Normalized Flow QA report (link-run only)
   --version, -v          Print the package version
@@ -72,11 +75,29 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, verify, or link-run. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, or link-run. See --help.');
     process.stdout.write(help);
     return;
   }
   const command = positionals[0];
+  if (command === 'init-profile') {
+    if (positionals.length !== 2 || !positionals[1] || !values.out) throw new Error('init-profile requires one bundle directory and --out FILE.');
+    if (Object.keys(values).some(key => !['out', 'help'].includes(key))) throw new Error('Unsupported option for init-profile. Use only --out FILE.');
+    const { analysis } = await readVerifiedBundle(resolve(positionals[1]));
+    if (analysis.schemaVersion !== 'error-to-test/analysis-1' || !Array.isArray(analysis.groups) || !Array.isArray(analysis.candidates)) throw new Error('Unsupported analysis contract.');
+    const profile = createProfileTemplate(analysis as unknown as Analysis);
+    const content = jsonText(profile);
+    if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('The generated profile exceeds 1 MiB. Narrow the selected groups.');
+    const out = resolve(values.out);
+    await mkdir(dirname(out), { recursive: true });
+    try { await writeFile(out, content, { flag: 'wx', mode: 0o600 }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output file already exists. Choose a new --out FILE path.');
+      throw error;
+    }
+    process.stdout.write(`Profile template written: ${out}\nFill requirement, expectedSource, preconditions, and steps; confirm setupConfirmed and clear answered questions. Then rerun analyze with the original input and --profile ${out}.\n`);
+    return;
+  }
   if (command === 'link-run') {
     if (positionals.length !== 2 || !positionals[1] || !values.report) throw new Error('link-run requires a bundle directory and --report.');
     if (Object.keys(values).some(key => key !== 'report' && key !== 'help')) throw new Error('Unsupported option for link-run.');
@@ -97,7 +118,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, verify, or link-run. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, or link-run. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
   const format = values.format ?? 'auto';
