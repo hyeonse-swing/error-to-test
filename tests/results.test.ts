@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { analyzeErrors, writeBundle, linkFlowQaReport } from '../src/index.ts';
+import { jsonText } from '../src/artifacts.ts';
 
 test('run linkage binds exact suite/cases, redacts reasons, preserves old results and never closes issues', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-results-'));
@@ -12,6 +13,8 @@ test('run linkage binds exact suite/cases, redacts reasons, preserves old result
     const out = join(temp, 'bundle');
     await writeBundle(out, analyzeErrors('Error: missing expected behavior'));
     const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    const bundleFiles = ['analysis.json', 'report.md', 'flows/error-to-test.md', 'provenance.json', 'cases/error-to-test.json'];
+    const bundleBytes = await Promise.all(bundleFiles.map(name => readFile(join(out, name))));
     const raw = {
       schemaVersion: 'flow-qa/report-1', runId: randomUUID(), suiteHash: provenance.suiteSha256,
       startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z', status: 'blocked',
@@ -19,6 +22,15 @@ test('run linkage binds exact suite/cases, redacts reasons, preserves old result
     };
     const file = await linkFlowQaReport(out, raw);
     const result = await readFile(file, 'utf8');
+    assert.equal(result, jsonText({
+      schemaVersion: 'error-to-test/results-1', runId: raw.runId,
+      inputSha256: provenance.inputSha256, suiteSha256: provenance.suiteSha256,
+      startedAt: '2026-10-13T01:00:00.000Z', finishedAt: '2026-10-13T01:01:00.000Z',
+      status: 'blocked',
+      cases: provenance.mappings.map((mapping: object) => ({ ...mapping, status: 'blocked', reason: 'Unknown behavior; token=[redacted]' })),
+      note: 'These results cover the specified assertions. No source issue was automatically closed.',
+    }));
+    for (const [index, name] of bundleFiles.entries()) assert.deepEqual(await readFile(join(out, name)), bundleBytes[index]);
     assert.ok(!result.includes('private-secret'));
     assert.match(result, /No source issue was automatically closed/);
     await assert.rejects(linkFlowQaReport(out, raw), /EEXIST/);

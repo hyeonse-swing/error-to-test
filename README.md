@@ -136,6 +136,32 @@ node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa
 
 The run's suite hash and every case ID must match. Safe case results are stored under `results/<runId>.json`, linked to their source groups/events. Unknown, missing, or duplicate cases are rejected; existing results are never overwritten. A raw e2e report is not accepted. Failed, blocked, and passed results remain distinct; no issue is automatically marked fixed.
 
+### Summarize linked runs
+
+Read the latest linked run's case outcomes by original error group:
+
+```sh
+error-to-test results .error-to-test/reviewed
+error-to-test results .error-to-test/reviewed --out ./run-summary.md
+error-to-test results .error-to-test/reviewed --format json --out ./run-summary.json
+```
+
+The summary includes the linked run count, latest run ID/status/timestamps, case totals, and each group's cases and reported reasons. `passed`, `failed`, `flaky`, `blocked`, `skipped`, and `error` remain separate. Without any linked runs, selected cases are `not-run`; groups excluded from TC selection are shown without selected cases. An empty selection does not become a passing result.
+
+Latest means the greatest reported `finishedAt`, then `startedAt`, then lexical run ID for ties. One whole run supplies all displayed case outcomes; earlier successes are never combined with newer runs to manufacture an all-passing result. When runs are linked, pending review and missing candidate context remain visible. These are supplied report outcomes, not review approval, independent execution proof, or evidence that the source issue is resolved.
+
+The bundle and every linked JSON result are checked before output: schema, source/suite hashes, exact case/group/event mappings, statuses, and timestamps must agree. Invalid older runs also fail the request. The reader accepts up to 1,000 directory entries, 2 MiB per result file, and 64 MiB total result bytes. Non-JSON incidental files are ignored; malformed JSON filenames, symlinks, non-regular result files, and limit violations are rejected. `--out` requires a new file outside the bundle's `results` directory and never overwrites existing content. Analysis artifacts and linked results remain unchanged.
+
+The API provides the same data and Markdown renderer:
+
+```js
+import { readRunSummary, renderRunSummary } from '@ihyeon/error-to-test';
+
+const summary = await readRunSummary('./analysis');
+console.log(summary.counts);
+console.log(renderRunSummary(summary));
+```
+
 ## Data handling and checks
 
 Known credential assignments, bearer/recognized token formats, email addresses, and URL userinfo/query/fragment are removed before artifacts. Sensitive execution steps are omitted and block the case rather than silently changing its assertion. This is best-effort redaction, not a guarantee of complete anonymization; remove private application data before submitting it. Use files/stdin for private reports to avoid shell history. Logs are source data, not instructions. No external URL from a log becomes an execution target automatically.

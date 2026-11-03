@@ -6,7 +6,7 @@ import { redactText } from './redact.ts';
 import type { Analysis } from './types.ts';
 
 export function jsonText(value: unknown): string { return `${JSON.stringify(value, null, 2)}\n`; }
-function literal(value: string): string {
+export function literal(value: string): string {
   const safe = redactText(value);
   const runs = safe.match(/`+/g) ?? [];
   const fence = '`'.repeat(Math.max(3, ...runs.map(run => run.length + 1)));
@@ -88,6 +88,7 @@ export async function readBoundedFile(path: string, maxBytes = 10 * 1024 * 1024)
 }
 export async function readVerifiedBundle(directory: string, options: { input?: string; profile?: string } = {}): Promise<{
   analysis: Record<string, unknown>;
+  provenance: Record<string, unknown>;
   verification: { suite: boolean; reviewed: boolean; sourceChecked: boolean };
 }> {
   const root = resolve(directory);
@@ -121,7 +122,7 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
   }
   if (options.input !== undefined && hash(options.input) !== text(provenance.inputSha256, 'provenance.inputSha256')) throw new Error('STALE_BUNDLE: Input changed since analysis.');
   if (options.profile !== undefined && hash(options.profile) !== provenance.profileSha256) throw new Error('STALE_BUNDLE: Profile changed since analysis.');
-  return { analysis, verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
+  return { analysis, provenance, verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
 }
 export async function verifyBundle(directory: string, options: { input?: string; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
   return (await readVerifiedBundle(directory, options)).verification;

@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const root = resolve('.');
 const temp = await mkdtemp(join(tmpdir(), 'error-to-test-consumer-'));
@@ -50,6 +51,35 @@ try {
   const refinedSuite = JSON.parse(await readFile(join(reviewed, 'cases/error-to-test.json'), 'utf8'));
   assert.ok(refinedSuite.cases[0].questions.some(question => question.includes('Review this draft')));
   assert.match(runCli(['verify', reviewed, '--input', errorFile, '--profile', profileFile]), /Suite: present; review: pending; original input: checked/);
+  const noRuns = JSON.parse(runCli(['results', reviewed, '--format', 'json']));
+  assert.equal(noRuns.runCount, 0);
+  assert.equal(noRuns.counts['not-run'], 1);
+  const runProvenance = JSON.parse(await readFile(join(reviewed, 'provenance.json'), 'utf8'));
+  let latestRunId;
+  for (const [status, finishedAt] of [['failed', '2026-11-03T01:01:00Z'], ['blocked', '2026-11-03T01:02:00Z']]) {
+    const runId = randomUUID();
+    const reportFile = join(temp, `${runId}.json`);
+    await writeFile(reportFile, JSON.stringify({
+      schemaVersion: 'flow-qa/report-1', runId, suiteHash: runProvenance.suiteSha256,
+      startedAt: '2026-11-03T01:00:00Z', finishedAt, status,
+      cases: runProvenance.mappings.map(mapping => ({ id: mapping.caseId, status, reason: 'Reported outcome; token=demo-private' })),
+    }));
+    runCli(['link-run', reviewed, '--report', reportFile]);
+    latestRunId = runId;
+  }
+  const summaryFile = join(temp, 'run-summary.json');
+  runCli(['results', reviewed, '--format', 'json', '--out', summaryFile]);
+  const summaryText = await readFile(summaryFile, 'utf8');
+  const summary = JSON.parse(summaryText);
+  assert.equal(summary.schemaVersion, 'error-to-test/run-summary-1');
+  assert.equal(summary.runCount, 2);
+  assert.equal(summary.latestRun.runId, latestRunId);
+  assert.equal(summary.counts.blocked, 1);
+  assert.equal(summary.counts.failed, 0);
+  assert.ok(!summaryText.includes('demo-private'));
+  await writeFile(join(temp, 'summary-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readRunSummary,renderRunSummary} from '@ihyeon/error-to-test';\nconst summary=await readRunSummary(process.argv[2]);\nassert.equal(summary.runCount,2);\nassert.equal(summary.counts.blocked,1);\nassert.ok(renderRunSummary(summary).includes(summary.latestRun.runId));\n`);
+  execFileSync(process.execPath, ['summary-consumer.mjs', reviewed], { cwd: temp, stdio: 'pipe' });
+  assert.match(runCli(['verify', reviewed, '--input', errorFile, '--profile', profileFile]), /original input: checked/);
   const reports = [];
   for (let run = 0; run < 2; run++) {
     const output = execFileSync('npm', ['run', 'demo', '--prefix', installedRoot], { cwd: temp, encoding: 'utf8', env: npmEnvironment, timeout: 30_000 });
@@ -61,5 +91,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile workflow, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile/results workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

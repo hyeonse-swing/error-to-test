@@ -77,6 +77,22 @@ Flow QA 설치와 실행 대상 설정은 별도로 필요합니다. 위 `flows/
 
 실행 후 `node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json`으로 결과를 원래 오류 묶음에 연결할 수 있습니다. suite 해시와 모든 case ID가 일치해야 하며, 결과는 `results/<runId>.json`에 저장합니다. 원본 e2e 리포트 대신 Flow QA가 정리한 `report-1`을 사용하세요.
 
+연결한 결과는 `results`로 오류 묶음별 최신 TC 결과를 모아 볼 수 있습니다.
+
+```sh
+error-to-test results .error-to-test/reviewed
+error-to-test results .error-to-test/reviewed --out ./run-summary.md
+error-to-test results .error-to-test/reviewed --format json --out ./run-summary.json
+```
+
+연결된 실행 수, 최신 실행의 상태·시각, TC 상태별 건수와 묶음별 결과·사유를 표시합니다. 통과·실패·flaky·차단·건너뜀·오류를 구분하고, 실행 결과가 없으면 선택된 TC를 `not-run`으로 표시합니다. TC가 선택되지 않은 원본 묶음도 남습니다.
+
+보고된 종료 시각이 가장 늦은 실행 하나를 기준으로 합니다. 종료 시각이 같으면 시작 시각, 실행 ID 순으로 결정하며 파일 수정 시각은 사용하지 않습니다. 여러 실행의 통과 결과를 섞지 않습니다. 연결된 실행이 있으면 검토 대기와 미확인 맥락도 표시하며, 결과를 원래 오류의 수정 완료나 실행 승인으로 취급하지 않습니다.
+
+출력 전에 번들과 연결 결과의 형식·원본/suite 해시·case/group/event 연결·상태·시각을 검사합니다. 오래된 결과라도 잘못된 JSON이 있으면 실패하며, 기존 산출물과 결과 파일은 수정하지 않습니다. 결과 폴더는 최대 1,000개 항목, 각 JSON은 2 MiB, 전체 결과는 64 MiB까지 지원합니다. 다른 확장자의 부수 파일은 무시하고 잘못된 JSON 이름·심볼릭 링크·일반 파일이 아닌 결과·한도 초과는 거부합니다. `--out`은 번들의 `results` 폴더 밖에 있는 새 파일만 허용합니다.
+
+API에서는 `await readRunSummary(directory)`로 같은 데이터를 읽고 `renderRunSummary(summary)`로 Markdown을 만듭니다.
+
 직접 입력은 문자열, 텍스트 파일, 표준 입력, `error-to-test/manual-1` JSON을 지원합니다. 파일 구조는 [수동 오류 예제](examples/manual.json), 정상 기대 동작과 단계 연결은 [프로필 예제](examples/profile.json)를 참고하세요. 전체 옵션은 `node bin/error-to-test.mjs --help`로 확인할 수 있습니다.
 
 알려진 자격증명·이메일·URL 인증/쿼리 정보는 결과에서 정제합니다. 민감정보가 포함된 실행 단계나 기대 결과는 변경해 통과시키지 않고 질문으로 남깁니다. 모든 개인정보를 제거한다고 보장하지 않으므로 실제 업무 데이터를 입력하기 전에는 별도로 정제하세요. 비공개 오류는 셸 기록에 남는 인자 대신 파일·표준 입력을 사용하세요.

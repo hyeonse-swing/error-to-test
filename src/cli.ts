@@ -1,12 +1,13 @@
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { analyzeErrors } from './analysis.ts';
 import { jsonText, readBoundedFile, readVerifiedBundle, verifyBundle, writeBundle } from './artifacts.ts';
 import { createProfileTemplate } from './profile-template.ts';
 import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
+import { readRunSummary, renderRunSummary } from './run-summary.ts';
 import type { Analysis, EventType, Runtime } from './types.ts';
 
 const help = `Error to Test — local error analysis and regression TC drafts
@@ -18,11 +19,13 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test verify new-directory [--input errors.json] [--profile profile.json]
   error-to-test init-profile new-directory --out profile.json
   error-to-test link-run new-directory --report path/to/qa-report.json
+  error-to-test results new-directory [--format text|json] [--out summary.md]
 
 Options:
   --input FILE           SDK export, manual JSON, or plain error text (- for stdin)
   --error TEXT           Submit a single error directly; remaining lines are its stack
-  --format auto|json|text Auto rejects malformed JSON-looking input
+  --format auto|json|text Analyze input format; auto rejects malformed JSON-looking input
+  --format text|json      Results summary format (default: text Markdown)
   --profile FILE         Confirmed app scenarios and explicit assertions (optional)
   --project NAME         Metadata for a manual report
   --environment NAME    Metadata for a manual report
@@ -39,6 +42,7 @@ Options:
   --top N                Generate TCs for the first N eligible ranked groups (1..100; after --min-count)
   --out DIRECTORY        New analyze directory; existing files are never overwritten
   --out FILE             New init-profile JSON file; existing files are never overwritten
+  --out FILE             New results summary file; existing files are never overwritten
   --reviewed             Acknowledge review; unresolved questions still block cases
   --report FILE          Normalized Flow QA report (link-run only)
   --version, -v          Print the package version
@@ -59,6 +63,26 @@ async function stdinText(): Promise<string> {
   }
   return Buffer.concat(chunks).toString('utf8');
 }
+async function canonicalOutput(path: string): Promise<string> {
+  let existing = path;
+  while (true) {
+    try { await lstat(existing); break; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = dirname(existing);
+      if (parent === existing) throw error;
+      existing = parent;
+    }
+  }
+  return resolve(await realpath(existing), relative(existing, path));
+}
+
+function insideBundleResults(bundleRoot: string, path: string): boolean {
+  const rest = relative(bundleRoot, path);
+  if (rest === '' || rest === '..' || rest.startsWith(`..${sep}`) || isAbsolute(rest)) return false;
+  return rest.split(sep, 1)[0]?.toLowerCase() === 'results';
+}
+
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string' }, error: { type: 'string' }, report: { type: 'string' },
@@ -75,7 +99,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, or link-run. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, link-run, or results. See --help.');
     process.stdout.write(help);
     return;
   }
@@ -108,6 +132,32 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Run linked: ${file}\nSource issues were not automatically closed.\n`);
     return;
   }
+  if (command === 'results') {
+    if (positionals.length !== 2 || !positionals[1]) throw new Error('results requires one bundle directory.');
+    if (Object.keys(values).some(key => !['format', 'out', 'help'].includes(key))) throw new Error('Unsupported option for results. Use only --format text|json and --out FILE.');
+    const format = values.format ?? 'text';
+    if (format !== 'text' && format !== 'json') throw new Error('results --format must be text or json.');
+    const bundle = resolve(positionals[1]);
+    const summary = await readRunSummary(bundle);
+    const content = format === 'json' ? jsonText(summary) : renderRunSummary(summary);
+    if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The results summary exceeds 64 MiB. Narrow the bundle before requesting output.');
+    if (values.out === undefined) {
+      process.stdout.write(content);
+      return;
+    }
+    const out = resolve(values.out);
+    if (insideBundleResults(await realpath(bundle), await canonicalOutput(out))) {
+      throw new Error('The results summary cannot be written inside the bundle results directory. Choose an outside --out FILE path.');
+    }
+    await mkdir(dirname(out), { recursive: true });
+    try { await writeFile(out, content, { flag: 'wx', mode: 0o600 }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output file already exists. Choose a new --out FILE path.');
+      throw error;
+    }
+    process.stdout.write(`Results summary written: ${out}\n`);
+    return;
+  }
   if (command === 'verify') {
     if (positionals.length !== 2 || !positionals[1]) throw new Error('verify requires one bundle directory.');
     if (Object.keys(values).some(key => !['input', 'profile', 'help'].includes(key))) throw new Error('Unsupported option for verify.');
@@ -118,7 +168,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, or link-run. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, or results. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
   const format = values.format ?? 'auto';

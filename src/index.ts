@@ -6,4 +6,5 @@ export { exportFlowQa } from './exports/flow-qa.ts';
 export { writeBundle, verifyBundle, renderReport } from './artifacts.ts';
 export { linkFlowQaReport } from './results.ts';
 export { createProfileTemplate } from './profile-template.ts';
+export { readRunSummary, renderRunSummary, type RunSummary, type LinkedRunStatus, type LinkedCaseStatus } from './run-summary.ts';
 export type * from './types.ts';

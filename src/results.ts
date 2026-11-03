@@ -1,6 +1,6 @@
 import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { jsonText, readBoundedFile, verifyBundle } from './artifacts.ts';
+import { jsonText, readVerifiedBundle } from './artifacts.ts';
 import { record, text, timestamp } from './validation.ts';
 import { redactText } from './redact.ts';
 
@@ -10,9 +10,8 @@ const caseStatuses = new Set(['passed', 'failed', 'flaky', 'blocked', 'skipped',
 /** Associate a normalized Flow QA report with the exact exported immutable suite. */
 export async function linkFlowQaReport(directory: string, rawReport: unknown): Promise<string> {
   const root = resolve(directory);
-  const verified = await verifyBundle(root);
+  const { verification: verified, provenance } = await readVerifiedBundle(root);
   if (!verified.suite) throw new Error('This bundle has no suite to associate with a run.');
-  const provenance = record(JSON.parse(await readBoundedFile(resolve(root, 'provenance.json'))), 'provenance');
   const report = record(rawReport, 'report');
   if (report.schemaVersion !== 'flow-qa/report-1') throw new Error('Use a normalized Flow QA report-1, not an e2e raw report.');
   const runId = text(report.runId, 'report.runId');

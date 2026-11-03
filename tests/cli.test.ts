@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
 function run(args: string[], input?: string) { return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', input, timeout: 15000 }); }
@@ -219,5 +220,165 @@ test('init-profile refuses stale, empty, and invalid requests before writing a f
     assert.equal(staleAnalysis.status, 1);
     assert.match(staleAnalysis.stderr, /STALE_BUNDLE/);
     await assert.rejects(stat(target), { code: 'ENOENT' });
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('results reports only the latest linked run and preserves the source bundle', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-summary-'));
+  try {
+    const example = JSON.parse(await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8'));
+    const input = join(temp, 'events.json');
+    const profile = join(temp, 'profile.json');
+    const bundle = join(temp, 'bundle');
+    await writeFile(input, JSON.stringify({ ...example, events: [example.events[0], example.events[2]] }));
+    await writeFile(profile, await readFile(new URL('../examples/profile.json', import.meta.url)));
+    const analyzed = run(['analyze', '--input', input, '--profile', profile, '--reviewed', '--out', bundle]);
+    assert.equal(analyzed.status, 0, analyzed.stderr);
+    const provenance = JSON.parse(await readFile(join(bundle, 'provenance.json'), 'utf8'));
+    const ids = provenance.mappings.map((item: { caseId: string }) => item.caseId);
+    assert.equal(ids.length, 2);
+    const originalFiles = ['analysis.json', 'report.md', 'flows/error-to-test.md', 'cases/error-to-test.json', 'provenance.json'];
+    const before = await Promise.all(originalFiles.map(file => readFile(join(bundle, file), 'utf8')));
+    const empty = run(['results', bundle, '--format', 'json']);
+    assert.equal(empty.status, 0, empty.stderr);
+    const emptySummary = JSON.parse(empty.stdout);
+    assert.equal(emptySummary.schemaVersion, 'error-to-test/run-summary-1');
+    assert.equal(emptySummary.runCount, 0);
+    assert.equal(emptySummary.counts['not-run'], 2);
+    assert.equal(emptySummary.latestRun, undefined);
+    assert.deepEqual(emptySummary.groups.flatMap((group: { cases: { status: string }[] }) => group.cases.map(item => item.status)), ['not-run', 'not-run']);
+    const link = async (finishedAt: string, status: string, statuses: string[], reasons: (string | undefined)[]) => {
+      const report = join(temp, `${randomUUID()}.json`);
+      const runId = randomUUID();
+      await writeFile(report, JSON.stringify({
+        schemaVersion: 'flow-qa/report-1', runId, suiteHash: provenance.suiteSha256,
+        startedAt: '2026-10-13T01:00:00Z', finishedAt, status,
+        cases: ids.map((id: string, index: number) => ({ id, status: statuses[index], ...(reasons[index] ? { reason: reasons[index] } : {}) })),
+      }));
+      const linked = run(['link-run', bundle, '--report', report]);
+      assert.equal(linked.status, 0, linked.stderr);
+      return runId;
+    };
+    const latest = await link('2026-10-13T01:03:00Z', 'failed', ['failed', 'passed'], ['Failed `assert`\n```\ntoken=private-secret', undefined]);
+    await link('2026-10-13T01:02:00Z', 'blocked', ['blocked', 'blocked'], ['Earlier run', 'Earlier run']);
+    const summaryResult = run(['results', bundle, '--format', 'json']);
+    assert.equal(summaryResult.status, 0, summaryResult.stderr);
+    const summary = JSON.parse(summaryResult.stdout);
+    assert.equal(summary.runCount, 2);
+    assert.equal(summary.latestRun.runId, latest);
+    assert.equal(summary.latestRun.status, 'failed');
+    assert.equal(summary.counts.failed, 1);
+    assert.equal(summary.counts.passed, 1);
+    assert.equal(summary.counts.blocked, 0);
+    const cases = summary.groups.flatMap((group: { cases: { caseId: string; status: string; reason?: string }[] }) => group.cases);
+    assert.deepEqual(cases.map((item: { caseId: string; status: string }) => [item.caseId, item.status]), [[ids[0], 'failed'], [ids[1], 'passed']]);
+    assert.ok(!summaryResult.stdout.includes('private-secret'));
+    const textResult = run(['results', bundle]);
+    assert.equal(textResult.status, 0, textResult.stderr);
+    assert.match(textResult.stdout, /```/);
+    assert.match(textResult.stdout, /Failed/);
+    assert.ok(!textResult.stdout.includes('private-secret'));
+    const output = join(temp, 'summaries', 'summary.json');
+    const written = run(['results', bundle, '--format', 'json', '--out', output]);
+    assert.equal(written.status, 0, written.stderr);
+    assert.equal(written.stdout, `Results summary written: ${output}\n`);
+    assert.deepEqual(JSON.parse(await readFile(output, 'utf8')), summary);
+    assert.equal((await stat(output)).mode & 0o777, 0o600);
+    assert.equal(run(['verify', bundle, '--input', input, '--profile', profile]).status, 0);
+    assert.deepEqual(await Promise.all(originalFiles.map(file => readFile(join(bundle, file), 'utf8'))), before);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('results rejects invalid requests, stale bundles, tampered results, and existing output targets', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-summary-invalid-'));
+  try {
+    const bundle = join(temp, 'bundle');
+    assert.equal(run(['analyze', '--error', 'Error: observed', '--out', bundle]).status, 0);
+    const target = join(temp, 'new', 'summary.json');
+    const existing = join(temp, 'existing.json');
+    await writeFile(existing, 'keep me');
+    const link = join(temp, 'symlink.json');
+    await symlink(existing, link);
+    for (const args of [
+      ['results', bundle, '--format', 'auto'],
+      ['results', bundle, '--format', 'xml'],
+      ['results', bundle, '--out', target, 'extra'],
+      ['results', bundle, '--input', 'x', '--out', target],
+      ['results', bundle, '--report', 'x', '--out', target],
+      ['results', bundle, '--reviewed', '--out', target],
+      ['results', bundle, '--unknown-flag', '--out', target],
+    ]) {
+      const result = run(args);
+      assert.equal(result.status, 1, `${args.join(' ')}: ${result.stderr}`);
+      assert.equal(result.stdout, '');
+      await assert.rejects(stat(target), { code: 'ENOENT' });
+    }
+    for (const out of [existing, link, temp]) {
+      const result = run(['results', bundle, '--out', out]);
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '');
+    }
+    assert.equal(await readFile(existing, 'utf8'), 'keep me');
+    const internal = join(bundle, 'results', 'summary.json');
+    const noHistoryOutput = run(['results', bundle, '--out', internal]);
+    assert.equal(noHistoryOutput.status, 1);
+    assert.equal(noHistoryOutput.stdout, '');
+    assert.match(noHistoryOutput.stderr, /bundle results directory/);
+    await assert.rejects(stat(join(bundle, 'results')), { code: 'ENOENT' });
+    const uppercaseOutput = run(['results', bundle, '--out', join(bundle, 'RESULTS', 'summary.json')]);
+    assert.equal(uppercaseOutput.status, 1);
+    assert.equal(uppercaseOutput.stdout, '');
+    assert.match(uppercaseOutput.stderr, /bundle results directory/);
+    await assert.rejects(stat(join(bundle, 'RESULTS')), { code: 'ENOENT' });
+    const report = join(bundle, 'report.md');
+    const original = await readFile(report, 'utf8');
+    await writeFile(report, 'tampered');
+    const stale = run(['results', bundle, '--out', target]);
+    assert.equal(stale.status, 1);
+    assert.equal(stale.stdout, '');
+    assert.match(stale.stderr, /STALE_BUNDLE/);
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+    await writeFile(report, original);
+    const provenance = JSON.parse(await readFile(join(bundle, 'provenance.json'), 'utf8'));
+    const runId = randomUUID();
+    const qaReport = join(temp, 'qa-report.json');
+    await writeFile(qaReport, JSON.stringify({ schemaVersion: 'flow-qa/report-1', runId, suiteHash: provenance.suiteSha256,
+      startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z', status: 'blocked',
+      cases: provenance.mappings.map((item: { caseId: string }) => ({ id: item.caseId, status: 'blocked' })) }));
+    assert.equal(run(['link-run', bundle, '--report', qaReport]).status, 0);
+    const resultFile = join(bundle, 'results', `${runId}.json`);
+    const originalResult = await readFile(resultFile, 'utf8');
+    const resultsAlias = join(temp, 'results-alias');
+    const bundleAlias = join(temp, 'bundle-alias');
+    await symlink(join(bundle, 'results'), resultsAlias, 'dir');
+    await symlink(bundle, bundleAlias, 'dir');
+    for (const [source, out] of [
+      [bundle, internal],
+      [bundle, resultFile],
+      [bundle, join(resultsAlias, 'new-summary.json')],
+      [bundleAlias, join(bundleAlias, 'results', 'via-bundle-alias.json')],
+    ]) {
+      const rejected = run(['results', source, '--out', out]);
+      assert.equal(rejected.status, 1, rejected.stderr);
+      assert.equal(rejected.stdout, '');
+      assert.match(rejected.stderr, /bundle results directory/);
+    }
+    await assert.rejects(stat(internal), { code: 'ENOENT' });
+    await assert.rejects(stat(join(bundle, 'results', 'new-summary.json')), { code: 'ENOENT' });
+    assert.equal(await readFile(resultFile, 'utf8'), originalResult);
+    const sibling = join(temp, 'sibling-summary.json');
+    const siblingResult = run(['results', bundle, '--format', 'json', '--out', sibling]);
+    assert.equal(siblingResult.status, 0, siblingResult.stderr);
+    assert.equal(JSON.parse(await readFile(sibling, 'utf8')).runCount, 1);
+    assert.equal(run(['results', bundle, '--format', 'json']).status, 0);
+    assert.equal(run(['verify', bundle]).status, 0);
+    await writeFile(join(bundle, 'results', `${runId}.json`), '{}');
+    const tampered = run(['results', bundle, '--format', 'json', '--out', target]);
+    assert.equal(tampered.status, 1);
+    assert.equal(tampered.stdout, '');
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+    assert.match(run(['--help']).stdout, /results new-directory \[--format text\|json\]/);
+    assert.match(run(['nonsense']).stderr, /results/);
+    assert.match(run(['--out', target]).stderr, /results/);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });

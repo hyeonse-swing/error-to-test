@@ -163,6 +163,7 @@ test('verified analysis snapshot stays bound to its bundle after an analysis and
     await writeBundle(out, analyzeErrors('Error: original observation', { page: '/items', runtime: 'browser' }));
     const snapshot = await readVerifiedBundle(out);
     assert.deepEqual(snapshot.verification, { suite: true, reviewed: false, sourceChecked: false });
+    const originalProvenance = structuredClone(snapshot.provenance);
     const originalTemplate = createProfileTemplate(snapshot.analysis as unknown as Analysis);
     const alteredAnalysis = JSON.parse(await readFile(join(out, 'analysis.json'), 'utf8'));
     alteredAnalysis.groups[0].message = 'Error: replaced observation';
@@ -172,6 +173,8 @@ test('verified analysis snapshot stays bound to its bundle after an analysis and
     alteredProvenance.analysisSha256 = hash(alteredText);
     await writeFile(join(out, 'analysis.json'), alteredText);
     await writeFile(join(out, 'provenance.json'), jsonText(alteredProvenance));
+    assert.deepEqual(snapshot.provenance, originalProvenance);
+    assert.notDeepEqual(snapshot.provenance, alteredProvenance);
     assert.equal(hash(await readFile(join(out, 'analysis.json'), 'utf8')), alteredProvenance.analysisSha256);
     assert.deepEqual(createProfileTemplate(snapshot.analysis as unknown as Analysis), originalTemplate);
     assert.match(originalTemplate.scenarios[0]!.title, /original observation/);
