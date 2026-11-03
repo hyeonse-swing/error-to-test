@@ -44,6 +44,23 @@ error-to-test analyze --input errors.json --min-count 3 --top 10 --out ./recurri
 
 JavaScript API에서는 `analyzeErrors(content, { minCount: 3, top: 10 })`으로 같은 기준을 적용합니다.
 
+두 분석 결과는 `compare`로 비교할 수 있습니다. 릴리스가 바뀐 뒤 어떤 오류 서명이 다시 관측됐는지 확인할 때 사용합니다.
+
+```sh
+error-to-test analyze --input before-errors.json --release r1 --out ./before
+error-to-test analyze --input current-errors.json --release r2 --out ./current
+error-to-test compare ./before ./current
+error-to-test compare ./before ./current --format json --out ./comparison.json
+```
+
+현재에만 있는 서명(`only-current`), 양쪽에 있는 서명(`both`), 이전에만 있는 서명(`only-baseline`)으로 나누고 제공된 로그 건수와 증감을 보여줍니다. 릴리스만 제외하고 프로젝트·환경·실행 환경·오류 유형·페이지 경로·전체 오류 서명이 일치해야 합니다. 메시지나 소스 위치가 바뀌면 별도 서명이며, 비슷한 문장을 같은 원인으로 추정하지 않습니다.
+
+TC 생성 대상에서 제외된 묶음도 모두 비교합니다. 한쪽에 여러 릴리스가 있으면 같은 비교 키의 건수를 합산하고 원래 묶음 ID·릴리스 목록을 남깁니다. 단일 릴리스끼리 비교하려면 먼저 `analyze --release`로 범위를 정하세요. 페이지 조회 수는 합산하지 않습니다.
+
+이전에만 관측됐다는 표시가 수정 완료를 의미하지 않습니다. 건수는 입력에 포함된 이벤트·보고서 수이며, 발생률이나 영향 사용자 수가 아닙니다. 양쪽의 부분 내보내기·기간·필터·수집 범위와 경고도 표시합니다. 수집 이벤트 건수와 수동 제출 보고서 건수의 비교는 거부합니다. 수동 JSON과 텍스트는 같은 제출 보고서 기준으로 비교하되 형식 차이를 알립니다.
+
+양쪽 번들을 검증한 뒤 읽으며 원래 산출물·TC 상태·검토 조건·연결 결과는 수정하지 않습니다. 기본 출력은 Markdown이고, `--format json`은 `error-to-test/comparison-1`을 반환합니다. `--out`은 양쪽 번들의 `results` 폴더 밖에 있는 새 파일만 허용합니다. API는 `compareBundles()`와 `renderComparison()`입니다.
+
 `report.md` 상단에서 TC 초안 수와 추가 정보가 필요한 TC 수를 확인할 수 있습니다. 초안도 실행 전에 검토해야 합니다. 오류 묶음·수집 건수와 함께 대표 로그의 오류·React 컴포넌트 스택, 재현 방법·사전 조건·테스트 단계·부족한 정보도 표시합니다. 같은 스택은 한 번만 표시하며, 전체 로그의 모든 스택을 나열하지는 않습니다. 재현 단계와 정상 기대 결과, 명시적인 assertion이 없으면 질문이 있는 TC를 생성합니다. 직접 입력한 보고서에는 실제 발생 시각·사용자 수를 만들어 넣지 않습니다. 수집 건수도 실제 발생률을 뜻하지 않으며, 원본 내보내기의 일부 데이터 표시를 유지합니다.
 
 기본 suite는 검토 질문으로 실행이 차단됩니다. TC와 프로필을 확인한 뒤 다른 출력 폴더에 `--reviewed`로 다시 생성하면 검토 질문만 제거됩니다. 나머지 질문은 그대로 실행을 차단합니다. 프로필의 `setupConfirmed`는 준비 조건을 확인했다는 표시이며, 계정·데이터를 자동으로 준비하는 기능은 아닙니다.

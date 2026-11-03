@@ -6,12 +6,13 @@ import { redactText } from './redact.ts';
 import type { Analysis } from './types.ts';
 
 export function jsonText(value: unknown): string { return `${JSON.stringify(value, null, 2)}\n`; }
-export function literal(value: string): string {
-  const safe = redactText(value);
-  const runs = safe.match(/`+/g) ?? [];
+// Use only after callers have sanitized each untrusted field for its context.
+export function fencedText(value: string): string {
+  const runs = value.match(/`+/g) ?? [];
   const fence = '`'.repeat(Math.max(3, ...runs.map(run => run.length + 1)));
-  return `${fence}text\n${safe}\n${fence}`;
+  return `${fence}text\n${value}\n${fence}`;
 }
+export function literal(value: string): string { return fencedText(redactText(value)); }
 export function renderReport(analysis: Analysis): string {
   const draftCandidates = analysis.candidates.filter(candidate => candidate.state === 'draft').length;
   const needsContextCandidates = analysis.candidates.filter(candidate => candidate.state === 'needs-context').length;

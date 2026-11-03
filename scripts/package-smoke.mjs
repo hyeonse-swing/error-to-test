@@ -80,6 +80,33 @@ try {
   await writeFile(join(temp, 'summary-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readRunSummary,renderRunSummary} from '@ihyeon/error-to-test';\nconst summary=await readRunSummary(process.argv[2]);\nassert.equal(summary.runCount,2);\nassert.equal(summary.counts.blocked,1);\nassert.ok(renderRunSummary(summary).includes(summary.latestRun.runId));\n`);
   execFileSync(process.execPath, ['summary-consumer.mjs', reviewed], { cwd: temp, stdio: 'pipe' });
   assert.match(runCli(['verify', reviewed, '--input', errorFile, '--profile', profileFile]), /original input: checked/);
+  const comparisonSources = [];
+  const comparisonBundles = [];
+  for (const [side, release, sharedCount, uniqueMessage] of [
+    ['baseline', 'r1', 2, 'Only in baseline'], ['current', 'r2', 3, 'Only in current'],
+  ]) {
+    const inputFile = join(temp, `${side}-errors.json`);
+    const bundle = join(temp, `${side}-analysis`);
+    const messages = [...Array(sharedCount).fill('Shared observed failure'), uniqueMessage];
+    await writeFile(inputFile, JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: messages.map((message, index) => ({
+      id: `${side}-${index}`, project: 'demo', environment: 'test', release, type: 'javascript', runtime: 'browser',
+      page: '/items', message, stack: 'at render (/app.js:1:1)',
+    })) }));
+    runCli(['analyze', '--input', inputFile, '--min-count', '3', '--top', '1', '--out', bundle]);
+    comparisonSources.push(inputFile);
+    comparisonBundles.push(bundle);
+  }
+  const comparison = JSON.parse(runCli(['compare', ...comparisonBundles, '--format', 'json']));
+  assert.equal(comparison.schemaVersion, 'error-to-test/comparison-1');
+  assert.deepEqual(comparison.counts, { 'only-current': 1, both: 1, 'only-baseline': 1 });
+  assert.equal(comparison.baseline.recordCount, 3);
+  assert.equal(comparison.current.recordCount, 4);
+  assert.equal(comparison.issues.find(issue => issue.status === 'both').delta, 1);
+  await writeFile(join(temp, 'comparison-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {compareBundles,renderComparison} from '@ihyeon/error-to-test';\nconst comparison=await compareBundles(process.argv[2],process.argv[3]);\nassert.equal(comparison.counts.both,1);\nassert.equal(comparison.issues.find(issue=>issue.status==='both').delta,1);\nassert.ok(renderComparison(comparison).includes('only-current'));\n`);
+  execFileSync(process.execPath, ['comparison-consumer.mjs', ...comparisonBundles], { cwd: temp, stdio: 'pipe' });
+  for (let index = 0; index < comparisonBundles.length; index++) {
+    assert.match(runCli(['verify', comparisonBundles[index], '--input', comparisonSources[index]]), /original input: checked/);
+  }
   const reports = [];
   for (let run = 0; run < 2; run++) {
     const output = execFileSync('npm', ['run', 'demo', '--prefix', installedRoot], { cwd: temp, encoding: 'utf8', env: npmEnvironment, timeout: 30_000 });
@@ -91,5 +118,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile/results workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile/results/comparison workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

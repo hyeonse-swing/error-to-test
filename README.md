@@ -67,6 +67,25 @@ Use `--min-count N` (1..10,000; default 1) to generate TCs only for groups with 
 error-to-test analyze --input errors.json --min-count 3 --top 10 --out ./recurring-errors
 ```
 
+### Compare two analyses
+
+Compare verified snapshots, including snapshots from different releases:
+
+```sh
+error-to-test analyze --input before-errors.json --release r1 --out ./before
+error-to-test analyze --input current-errors.json --release r2 --out ./current
+error-to-test compare ./before ./current
+error-to-test compare ./before ./current --format json --out ./comparison.json
+```
+
+Each signature is classified as `only-current`, `both`, or `only-baseline`, with supplied record counts on both sides and their difference. Matching keeps project, environment, runtime, error type, page path, and the complete fingerprint-v1 signature; only release is excluded. Changes to messages or source locations remain separate signatures. This comparison does not infer a common root cause from similar text.
+
+All source groups participate, including groups excluded from TC generation by `--top` or `--min-count`. Multiple release groups with the same comparison key are aggregated on each side, with their original group IDs and release labels preserved. Use `analyze --release` first when you want one release per side. View counts are not summed or compared.
+
+`only-baseline` means absent from the supplied current snapshot, not fixed. Counts are supplied records, not error rates or affected users. Each side's coverage, filters, partial-export flag, unknown retention, and analysis warnings remain visible. Different collection windows or scopes can explain differences; comparisons between captured-event counts and submitted-report counts are rejected. Manual JSON and text both count submitted reports and can be compared, with a format-difference warning.
+
+Both bundles must pass consistency verification. The command reads their verified snapshots without editing artifacts, TC states, review gates, or linked results. Markdown is the default; `--format json` returns `error-to-test/comparison-1`. `--out` requires a new file outside either bundle's `results` directory. The API equivalents are `await compareBundles(baselineDirectory, currentDirectory)` and `renderComparison(comparison)`.
+
 ## Confirm the intended behavior
 
 See [examples/profile.json](examples/profile.json). Profiles use `schemaVersion: "error-to-test/profile-1"`, a name, and up to 100 scenarios. Each scenario has a unique ID, title, at least one match predicate, a requirement, its `expectedSource`, and explicit steps. Set `setupConfirmed: true` only after confirming how preconditions are established. Preconditions are descriptions; this package does not prepare accounts or data.

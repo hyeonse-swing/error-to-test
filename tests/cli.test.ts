@@ -382,3 +382,148 @@ test('results rejects invalid requests, stale bundles, tampered results, and exi
     assert.match(run(['--out', target]).stderr, /results/);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
+
+test('compare includes verified groups excluded from TC selection and preserves both bundles', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-compare-'));
+  try {
+    const example = JSON.parse(await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8'));
+    const event = (id: string, release: string, message: string, page: string) => ({
+      ...example.events[0], eventId: id, viewId: `view-${id}`, release, message, page,
+    });
+    const baselineInput = join(temp, 'baseline.json');
+    const currentInput = join(temp, 'current.json');
+    const baseline = join(temp, 'baseline');
+    const current = join(temp, 'current');
+    await writeFile(baselineInput, JSON.stringify({ schemaVersion: 1, partial: false, events: [
+      event('b1', 'old', 'Shared failure', '/shared'), event('b2', 'old', 'Shared failure', '/shared'),
+      event('b3', 'old', 'Shared failure', '/shared'), event('b4', 'old', 'Baseline only', '/baseline'),
+    ] }));
+    await writeFile(currentInput, JSON.stringify({ schemaVersion: 1, partial: false, events: [
+      event('c1', 'new', 'Shared failure', '/shared'), event('c2', 'new', 'Shared failure', '/shared'),
+      event('c3', 'new', 'Current only', '/current'),
+    ] }));
+    for (const [input, out] of [[baselineInput, baseline], [currentInput, current]]) {
+      const analyzed = run(['analyze', '--input', input, '--min-count', '2', '--top', '1', '--out', out]);
+      assert.equal(analyzed.status, 0, analyzed.stderr);
+      assert.equal(run(['verify', out]).status, 0);
+    }
+    const files = ['analysis.json', 'report.md', 'flows/error-to-test.md', 'cases/error-to-test.json', 'provenance.json'];
+    const before = await Promise.all([baseline, current].flatMap(bundle => files.map(file => readFile(join(bundle, file)))));
+    const result = run(['compare', baseline, current, '--format', 'json']);
+    assert.equal(result.status, 0, result.stderr);
+    const comparison = JSON.parse(result.stdout);
+    assert.equal(comparison.schemaVersion, 'error-to-test/comparison-1');
+    assert.deepEqual(comparison.counts, { 'only-current': 1, both: 1, 'only-baseline': 1 });
+    assert.equal(comparison.baseline.groupCount, 2);
+    assert.equal(comparison.current.groupCount, 2);
+    assert.equal(comparison.baseline.recordCount, 4);
+    assert.equal(comparison.current.recordCount, 3);
+    const shared = comparison.issues.find((issue: { status: string }) => issue.status === 'both');
+    assert.equal(shared.baseline.count, 3);
+    assert.equal(shared.current.count, 2);
+    assert.equal(shared.delta, -1);
+    assert.deepEqual(shared.baseline.releases, ['old']);
+    assert.deepEqual(shared.current.releases, ['new']);
+    assert.equal(comparison.issues.find((issue: { status: string }) => issue.status === 'only-baseline').delta, -1);
+    assert.equal(comparison.issues.find((issue: { status: string }) => issue.status === 'only-current').delta, 1);
+    const same = JSON.parse(run(['compare', baseline, baseline, '--format', 'json']).stdout);
+    assert.equal(same.counts.both, 2);
+    assert.equal(same.counts['only-current'], 0);
+    assert.equal(same.counts['only-baseline'], 0);
+    assert.ok(same.issues.every((issue: { delta: number }) => issue.delta === 0));
+    const markdown = join(temp, 'summaries', 'comparison.md');
+    const written = run(['compare', baseline, current, '--out', markdown]);
+    assert.equal(written.status, 0, written.stderr);
+    assert.equal(written.stdout, `Comparison written: ${markdown}\n`);
+    assert.match(await readFile(markdown, 'utf8'), /Shared failure/);
+    assert.equal((await stat(markdown)).mode & 0o777, 0o600);
+    assert.deepEqual(await Promise.all([baseline, current].flatMap(bundle => files.map(file => readFile(join(bundle, file))))), before);
+    assert.equal(run(['verify', baseline]).status, 0);
+    assert.equal(run(['verify', current]).status, 0);
+    assert.match(run(['--help']).stdout, /compare BASELINE CURRENT \[--format text\|json\]/);
+    assert.match(run(['nonsense']).stderr, /compare/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('compare rejects invalid, stale, incompatible, and unsafe output requests without writing', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-compare-invalid-'));
+  try {
+    const baseline = join(temp, 'baseline');
+    const current = join(temp, 'current');
+    assert.equal(run(['analyze', '--error', 'Error: shared', '--out', baseline]).status, 0);
+    assert.equal(run(['analyze', '--error', 'Error: shared', '--out', current]).status, 0);
+    const target = join(temp, 'new', 'compare.json');
+    for (const args of [
+      ['compare'], ['compare', baseline], ['compare', baseline, current, 'extra'],
+      ['compare', baseline, current, '--format', 'auto'],
+      ['compare', baseline, current, '--format', 'xml'],
+      ['compare', baseline, current, '--input', 'x'],
+      ['compare', baseline, current, '--top', '1'],
+      ['compare', baseline, current, '--report', 'x'],
+      ['compare', baseline, current, '--unknown-flag'],
+    ]) {
+      const rejected = run([...args, '--out', target]);
+      assert.equal(rejected.status, 1, `${args.join(' ')}: ${rejected.stderr}`);
+      assert.equal(rejected.stdout, '');
+      await assert.rejects(stat(target), { code: 'ENOENT' });
+    }
+    const existing = join(temp, 'existing.json');
+    await writeFile(existing, 'keep me');
+    const link = join(temp, 'existing-link.json');
+    await symlink(existing, link);
+    for (const out of [existing, link, temp]) {
+      const rejected = run(['compare', baseline, current, '--out', out]);
+      assert.equal(rejected.status, 1, rejected.stderr);
+      assert.equal(rejected.stdout, '');
+    }
+    assert.equal(await readFile(existing, 'utf8'), 'keep me');
+    const alias = join(temp, 'baseline-alias');
+    await symlink(baseline, alias, 'dir');
+    const currentAlias = join(temp, 'current-alias');
+    await symlink(current, currentAlias, 'dir');
+    for (const out of [
+      join(baseline, 'results', 'compare.md'), join(current, 'results', 'compare.md'),
+      join(baseline, 'RESULTS', 'compare.md'), join(current, 'RESULTS', 'compare.md'),
+      join(alias, 'results', 'compare.md'), join(currentAlias, 'results', 'compare.md'),
+    ]) {
+      const rejected = run(['compare', baseline, current, '--out', out]);
+      assert.equal(rejected.status, 1, rejected.stderr);
+      assert.equal(rejected.stdout, '');
+      assert.match(rejected.stderr, /bundle results directory/);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+    await assert.rejects(stat(join(baseline, 'results')), { code: 'ENOENT' });
+    await assert.rejects(stat(join(current, 'results')), { code: 'ENOENT' });
+    assert.equal(run(['compare', baseline, current, '--format', 'json']).status, 0);
+    const report = join(baseline, 'report.md');
+    const original = await readFile(report, 'utf8');
+    await writeFile(report, 'tampered');
+    const stale = run(['compare', baseline, current, '--out', target]);
+    assert.equal(stale.status, 1);
+    assert.equal(stale.stdout, '');
+    assert.match(stale.stderr, /STALE_BUNDLE/);
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+    await writeFile(report, original);
+    const currentReport = join(current, 'report.md');
+    const originalCurrent = await readFile(currentReport, 'utf8');
+    await writeFile(currentReport, 'tampered');
+    const staleCurrent = run(['compare', baseline, current, '--out', target]);
+    assert.equal(staleCurrent.status, 1);
+    assert.equal(staleCurrent.stdout, '');
+    assert.match(staleCurrent.stderr, /STALE_BUNDLE/);
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+    await writeFile(currentReport, originalCurrent);
+    const example = JSON.parse(await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8'));
+    const browserInput = join(temp, 'browser.json');
+    const browserBundle = join(temp, 'browser');
+    await writeFile(browserInput, JSON.stringify({ ...example, events: [example.events[0]] }));
+    assert.equal(run(['analyze', '--input', browserInput, '--out', browserBundle]).status, 0);
+    const mismatched = run(['compare', baseline, browserBundle, '--out', target]);
+    assert.equal(mismatched.status, 1);
+    assert.equal(mismatched.stdout, '');
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+    const sibling = run(['compare', baseline, current, '--format', 'json', '--out', target]);
+    assert.equal(sibling.status, 0, sibling.stderr);
+    assert.equal(JSON.parse(await readFile(target, 'utf8')).schemaVersion, 'error-to-test/comparison-1');
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});

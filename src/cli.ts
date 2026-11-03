@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { analyzeErrors } from './analysis.ts';
 import { jsonText, readBoundedFile, readVerifiedBundle, verifyBundle, writeBundle } from './artifacts.ts';
+import { compareBundles, renderComparison } from './comparison.ts';
 import { createProfileTemplate } from './profile-template.ts';
 import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
@@ -20,12 +21,14 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test init-profile new-directory --out profile.json
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md]
+  error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md]
 
 Options:
   --input FILE           SDK export, manual JSON, or plain error text (- for stdin)
   --error TEXT           Submit a single error directly; remaining lines are its stack
   --format auto|json|text Analyze input format; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
+  --format text|json      Compare format (default: text Markdown)
   --profile FILE         Confirmed app scenarios and explicit assertions (optional)
   --project NAME         Metadata for a manual report
   --environment NAME    Metadata for a manual report
@@ -43,6 +46,7 @@ Options:
   --out DIRECTORY        New analyze directory; existing files are never overwritten
   --out FILE             New init-profile JSON file; existing files are never overwritten
   --out FILE             New results summary file; existing files are never overwritten
+  --out FILE             New comparison file; existing files are never overwritten
   --reviewed             Acknowledge review; unresolved questions still block cases
   --report FILE          Normalized Flow QA report (link-run only)
   --version, -v          Print the package version
@@ -99,7 +103,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, link-run, or results. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, link-run, results, or compare. See --help.');
     process.stdout.write(help);
     return;
   }
@@ -158,6 +162,36 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Results summary written: ${out}\n`);
     return;
   }
+  if (command === 'compare') {
+    if (positionals.length !== 3 || !positionals[1] || !positionals[2]) throw new Error('compare requires BASELINE and CURRENT bundle directories.');
+    if (Object.keys(values).some(key => !['format', 'out', 'help'].includes(key))) throw new Error('Unsupported option for compare. Use only --format text|json and --out FILE.');
+    const format = values.format ?? 'text';
+    if (format !== 'text' && format !== 'json') throw new Error('compare --format must be text or json.');
+    const baseline = resolve(positionals[1]);
+    const current = resolve(positionals[2]);
+    const comparison = await compareBundles(baseline, current);
+    const content = format === 'json' ? jsonText(comparison) : renderComparison(comparison);
+    if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The comparison exceeds 64 MiB. Narrow the bundles before requesting output.');
+    if (values.out === undefined) {
+      process.stdout.write(content);
+      return;
+    }
+    const out = resolve(values.out);
+    const canonical = await canonicalOutput(out);
+    for (const bundle of [baseline, current]) {
+      if (insideBundleResults(await realpath(bundle), canonical)) {
+        throw new Error('The comparison cannot be written inside either bundle results directory. Choose an outside --out FILE path.');
+      }
+    }
+    await mkdir(dirname(out), { recursive: true });
+    try { await writeFile(out, content, { flag: 'wx', mode: 0o600 }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output file already exists. Choose a new --out FILE path.');
+      throw error;
+    }
+    process.stdout.write(`Comparison written: ${out}\n`);
+    return;
+  }
   if (command === 'verify') {
     if (positionals.length !== 2 || !positionals[1]) throw new Error('verify requires one bundle directory.');
     if (Object.keys(values).some(key => !['input', 'profile', 'help'].includes(key))) throw new Error('Unsupported option for verify.');
@@ -168,7 +202,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, or results. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, results, or compare. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
   const format = values.format ?? 'auto';
