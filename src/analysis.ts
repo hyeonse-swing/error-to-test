@@ -13,7 +13,7 @@ export interface AnalyzeOptions extends ParseInputOptions {
 }
 
 interface VerifiedBaseline { analysis: unknown; analysisSha256: string }
-function analyze(content: string, options: AnalyzeOptions, baseline?: VerifiedBaseline): Analysis {
+function analyze(content: string | readonly string[], options: AnalyzeOptions, baseline?: VerifiedBaseline): Analysis {
   const top = options.top ?? 100;
   if (!Number.isInteger(top) || top < 1 || top > 100) throw new Error('top must be an integer between 1 and 100.');
   const minCount = options.minCount ?? 1;
@@ -27,7 +27,8 @@ function analyze(content: string, options: AnalyzeOptions, baseline?: VerifiedBa
   const profile = rawProfile === undefined ? undefined : parseProfile(rawProfile);
   const input = parseInput(content, options);
   const groups = groupObservations(input.observations);
-  const source = { sha256: input.sha256, ...(profileSource !== undefined ? { profileSha256: hash(profileSource) } : {}) };
+  const source = { sha256: input.sha256, ...(input.inputs ? { inputs: input.inputs } : {}),
+    ...(profileSource !== undefined ? { profileSha256: hash(profileSource) } : {}) };
   const warnings = [...input.warnings];
   let selectedGroups = groups;
   let selection: Analysis['selection'];
@@ -72,11 +73,11 @@ function analyze(content: string, options: AnalyzeOptions, baseline?: VerifiedBa
   };
 }
 
-export function analyzeErrors(content: string, options: AnalyzeOptions = {}): Analysis {
+export function analyzeErrors(content: string | readonly string[], options: AnalyzeOptions = {}): Analysis {
   return analyze(content, options);
 }
 
-export async function analyzeWithBaseline(content: string, baselineDirectory: string, options: AnalyzeOptions = {}): Promise<Analysis> {
+export async function analyzeWithBaseline(content: string | readonly string[], baselineDirectory: string, options: AnalyzeOptions = {}): Promise<Analysis> {
   const baseline = await readVerifiedBundle(baselineDirectory);
   if (typeof baseline.provenance.analysisSha256 !== 'string') throw new Error('STALE_BUNDLE: The baseline analysis hash is missing.');
   return analyze(content, options, { analysis: baseline.analysis, analysisSha256: baseline.provenance.analysisSha256 });

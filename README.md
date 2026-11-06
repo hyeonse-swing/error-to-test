@@ -67,6 +67,25 @@ Use `--min-count N` (1..10,000; default 1) to generate TCs only for groups with 
 error-to-test analyze --input errors.json --min-count 3 --top 10 --out ./recurring-errors
 ```
 
+### Analyze several log files together
+
+Repeat `--input` to combine exports before deduplication, filters, ranking, and TC selection:
+
+```sh
+error-to-test analyze --input morning.json --input afternoon.json --min-count 3 --top 10 --out ./combined
+error-to-test verify ./combined --input morning.json --input afternoon.json
+```
+
+Supply up to 50 files with a combined limit of 10 MiB and 10,000 raw records, including duplicates. Files must have the same input kind: SDK JSON exports/arrays together, manual JSON files together, or text reports together. Each text file is one report. `--format` and metadata/filter options apply to every file. Standard input (`--input -`) must be the only input to `analyze`; `verify` requires original files.
+
+Files and standard input must be valid UTF-8. Malformed encoding is rejected before hashing, so distinct invalid bytes cannot silently become the same replacement character.
+
+Duplicate project/record IDs are resolved across all files before filtering. Identical records count once; conflicting raw records are rejected even if redaction would make them look alike or filters would exclude them. The partial-export flag is true if any source is partial. Counts describe supplied records, not a global occurrence rate.
+
+For multiple files, `analysis.source.inputs` records each original SHA-256 and UTF-8 byte length in the supplied order. Filenames and raw contents are not stored. `source.sha256` is the SHA-256 of `JSON.stringify({ schemaVersion: 'error-to-test/inputs-1', inputs })`, with each descriptor ordered as `{ sha256, byteLength }`. The analysis hash protects the manifest, and the report lists it. Verification requires every original file in the same order, including its BOM and whitespace. A single input retains its original byte hash and existing output contract.
+
+The API accepts ordered content arrays: `analyzeErrors([firstContent, secondContent], options)`, `parseInput([firstContent, secondContent], options)`, and `await analyzeWithBaseline([firstContent, secondContent], baselineDirectory, options)`. Verify with `await verifyBundle(directory, { input: [firstContent, secondContent] })`. A one-element array is equivalent to its single string. Profile refinement and baseline selection work with the same ordered inputs and existing review gates.
+
 ### Compare two analyses
 
 Compare verified snapshots, including snapshots from different releases:

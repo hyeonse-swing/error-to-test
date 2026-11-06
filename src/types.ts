@@ -45,10 +45,15 @@ export interface SourceCoverage {
   retention: 'unknown';
   period?: { from?: string; to?: string };
 }
+export interface InputFileFingerprint {
+  sha256: string;
+  byteLength: number;
+}
 export interface ParsedInput {
   observations: ErrorObservation[];
   coverage: SourceCoverage;
   sha256: string;
+  inputs?: InputFileFingerprint[];
   warnings: string[];
 }
 export interface IssueGroup {
@@ -110,7 +115,7 @@ export interface TestCandidate {
 }
 export interface Analysis {
   schemaVersion: 'error-to-test/analysis-1';
-  source: { sha256: string; profileSha256?: string };
+  source: { sha256: string; inputs?: InputFileFingerprint[]; profileSha256?: string };
   coverage: SourceCoverage;
   groups: IssueGroup[];
   candidates: TestCandidate[];

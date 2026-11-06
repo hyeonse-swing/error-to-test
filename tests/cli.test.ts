@@ -5,10 +5,10 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
-function run(args: string[], input?: string) { return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', input, timeout: 15000 }); }
+function run(args: string[], input?: string | Buffer) { return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', input, timeout: 15000 }); }
 test('options require a command; bare invocation and help remain available', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-command-'));
   try {
@@ -81,6 +81,132 @@ test('invalid and ambiguous CLI input fails with no output and redacted errors',
   assert.equal(run(['analyze', '--input', '-', '--format', 'json'], '{broken').status, 1);
   assert.equal(run(['analyze', '--error', 'x', '--unknown-flag']).status, 1);
   assert.equal(run(['--help']).status, 0);
+});
+
+test('repeated manual JSON inputs combine before selection and verify their ordered originals', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-multi-cli-'));
+  try {
+    const first = join(temp, 'first.json');
+    const second = join(temp, 'second.json');
+    const firstText = JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [
+      { id: 'shared', message: 'Error: repeated', page: '/same' },
+      { id: 'other', message: 'Error: other', page: '/other' },
+    ] });
+    const secondText = JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [
+      { id: 'shared', message: 'Error: repeated', page: '/same' },
+      { id: 'third', message: 'Error: repeated', page: '/same' },
+    ] });
+    await writeFile(first, firstText);
+    await writeFile(second, secondText);
+    const single = join(temp, 'single');
+    assert.equal(run(['analyze', '--input', first, '--out', single]).status, 0);
+    const singleAnalysis = JSON.parse(await readFile(join(single, 'analysis.json'), 'utf8'));
+    assert.equal(singleAnalysis.source.sha256, createHash('sha256').update(firstText).digest('hex'));
+    assert.equal(singleAnalysis.source.inputs, undefined);
+    assert.equal(run(['verify', single, '--input', first]).status, 0);
+    const out = join(temp, 'multi');
+    const analyzed = run(['analyze', '--input', first, '--input', second, '--min-count', '2', '--top', '1', '--out', out]);
+    assert.equal(analyzed.status, 0, analyzed.stderr);
+    const analysis = JSON.parse(await readFile(join(out, 'analysis.json'), 'utf8'));
+    assert.equal(analysis.coverage.kind, 'manual-json');
+    assert.equal(analysis.coverage.inputCount, 4);
+    assert.equal(analysis.coverage.duplicates, 1);
+    assert.equal(analysis.groups.length, 2);
+    assert.equal(analysis.candidates.length, 1);
+    assert.equal(analysis.groups[0].count, 2);
+    assert.deepEqual(analysis.source.inputs, [firstText, secondText].map(content => ({
+      sha256: createHash('sha256').update(content).digest('hex'), byteLength: Buffer.byteLength(content),
+    })));
+    assert.equal(JSON.stringify(analysis).includes(first), false);
+    assert.equal(JSON.stringify(analysis).includes(second), false);
+    const verified = run(['verify', out, '--input', first, '--input', second]);
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.match(verified.stdout, /original input: checked/);
+    for (const args of [['--input', second, '--input', first], ['--input', first]]) {
+      const result = run(['verify', out, ...args]);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /STALE_BUNDLE/);
+    }
+    await writeFile(second, `${secondText} `);
+    const changed = run(['verify', out, '--input', first, '--input', second]);
+    assert.equal(changed.status, 1, changed.stderr);
+    assert.match(changed.stderr, /STALE_BUNDLE/);
+    await rm(second);
+    assert.equal(run(['verify', out, '--input', first, '--input', second]).status, 1);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('repeated input rejects invalid source sets before creating output', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-multi-invalid-'));
+  try {
+    const first = join(temp, 'first.json');
+    const second = join(temp, 'second.json');
+    await writeFile(first, JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ id: 'x', message: 'Error: first' }] }));
+    await writeFile(second, JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ id: 'x', message: 'Error: changed' }] }));
+    const largeA = join(temp, 'large-a.txt');
+    const largeB = join(temp, 'large-b.txt');
+    await writeFile(largeA, 'a'.repeat(6 * 1024 * 1024));
+    await writeFile(largeB, 'b'.repeat(6 * 1024 * 1024));
+    const cases: string[][] = [
+      ['--input', first, '--input', second],
+      ['--error', 'Error: direct', '--input', first, '--input', second],
+      ['--input', first, '--input', join(temp, 'sdk.json')],
+      ['--input', first, '--input', 'missing-file.json'],
+      ['--input', first, '--input', join(temp, 'empty.txt')],
+      ['--input', first, '--input', '   '],
+      ['--input', first, '--input', '-', '--format', 'json'],
+      ['--input', '-', '--input', '-', '--format', 'text'],
+      ['--input', largeA, '--input', largeB, '--format', 'text'],
+      Array.from({ length: 51 }, () => ['--input', first]).flat(),
+    ];
+    await writeFile(join(temp, 'sdk.json'), JSON.stringify({ schemaVersion: 1, events: [{
+      schemaVersion: 1, eventId: 'e1', project: 'shop', environment: 'prod', release: 'r1', sdkVersion: '0.1.5',
+      occurredAt: '2026-10-13T12:00:00Z', viewId: 'v1', sequence: 1, elapsedMs: 42,
+      type: 'javascript', message: 'Error: browser', page: '/items', runtime: 'browser',
+    }] }));
+    await writeFile(join(temp, 'empty.txt'), '');
+    for (const [index, args] of cases.entries()) {
+      const out = join(temp, `invalid-${index}`);
+      const result = run(['analyze', ...args, '--out', out], 'piped text');
+      assert.equal(result.status, 1, `${index}: ${result.stderr}`);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+    const verifyStdin = run(['verify', temp, '--input', '-'], 'piped text');
+    assert.equal(verifyStdin.status, 1);
+    assert.match(verifyStdin.stderr, /verify --input - is not supported/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('invalid UTF-8 bytes in files and stdin never produce or verify a bundle', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-invalid-utf8-'));
+  try {
+    const first = join(temp, 'first.txt');
+    const second = join(temp, 'second.txt');
+    await writeFile(first, 'Error: first');
+    await writeFile(second, 'Error: second');
+    const bundle = join(temp, 'bundle');
+    const analyzed = run(['analyze', '--input', first, '--input', second, '--format', 'text', '--out', bundle]);
+    assert.equal(analyzed.status, 0, analyzed.stderr);
+    assert.equal(run(['verify', bundle, '--input', first, '--input', second]).status, 0);
+
+    for (const byte of [0x80, 0x81]) {
+      const invalid = Buffer.concat([Buffer.from('Error: '), Buffer.from([byte])]);
+      await writeFile(second, invalid);
+      const out = join(temp, `invalid-${byte}`);
+      const fileAnalyze = run(['analyze', '--input', first, '--input', second, '--format', 'text', '--out', out]);
+      assert.equal(fileAnalyze.status, 1, fileAnalyze.stderr);
+      assert.match(fileAnalyze.stderr, /valid UTF-8/);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+      const verified = run(['verify', bundle, '--input', first, '--input', second]);
+      assert.equal(verified.status, 1, verified.stderr);
+      assert.match(verified.stderr, /valid UTF-8/);
+      const stdinOut = join(temp, `stdin-${byte}`);
+      const stdinAnalyze = run(['analyze', '--input', '-', '--format', 'text', '--out', stdinOut], invalid);
+      assert.equal(stdinAnalyze.status, 1, stdinAnalyze.stderr);
+      assert.match(stdinAnalyze.stderr, /valid UTF-8/);
+      await assert.rejects(stat(stdinOut), { code: 'ENOENT' });
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
 test('min-count produces a verifiable bundle without a suite when no group qualifies', async () => {

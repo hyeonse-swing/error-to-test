@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { isUtf8 } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -13,19 +14,19 @@ import type { Analysis, EventType, Runtime } from './types.ts';
 
 const help = `Error to Test — local error analysis and regression TC drafts
 
-  error-to-test analyze --input errors.json --profile profile.json --out new-directory
+  error-to-test analyze --input errors-1.json --input errors-2.json --profile profile.json --out new-directory
   error-to-test analyze --input errors.json --baseline previous-bundle --out new-directory
   error-to-test analyze --input error.txt --format text --page /items --out new-directory
   error-to-test analyze --error "TypeError: item is undefined" --page /items --out new-directory
   cat error.txt | error-to-test analyze --input - --format text --out new-directory
-  error-to-test verify new-directory [--input errors.json] [--profile profile.json]
+  error-to-test verify new-directory [--input errors-1.json --input errors-2.json] [--profile profile.json]
   error-to-test init-profile new-directory --out profile.json
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md]
 
 Options:
-  --input FILE           SDK export, manual JSON, or plain error text (- for stdin)
+  --input FILE           SDK export, manual JSON, or plain error text; repeat for same-format files in order (analyze: sole - for stdin)
   --error TEXT           Submit a single error directly; remaining lines are its stack
   --format auto|json|text Analyze input format; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
@@ -67,7 +68,26 @@ async function stdinText(): Promise<string> {
     if (bytes > 10 * 1024 * 1024) throw new Error('Input must be 10 MiB or smaller.');
     chunks.push(buffer);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  const input = Buffer.concat(chunks);
+  if (!isUtf8(input)) throw new Error('Input must be valid UTF-8.');
+  return input.toString('utf8');
+}
+async function inputContents(paths: string[], allowStdin: boolean): Promise<string | readonly string[]> {
+  if (paths.length < 1 || paths.length > 50) throw new Error('Provide between 1 and 50 --input files.');
+  if (paths.some(path => !path.trim())) throw new Error('--input requires a nonempty file path.');
+  if (paths.includes('-')) {
+    if (!allowStdin) throw new Error('verify --input - is not supported. Supply the original file.');
+    if (paths.length !== 1) throw new Error('--input - must be the sole input.');
+    return stdinText();
+  }
+  let remaining = 10 * 1024 * 1024;
+  const contents: string[] = [];
+  for (const path of paths) {
+    const content = await readBoundedFile(resolve(path), remaining);
+    remaining -= Buffer.byteLength(content);
+    contents.push(content);
+  }
+  return contents.length === 1 ? contents[0]! : contents;
 }
 async function canonicalOutput(path: string): Promise<string> {
   let existing = path;
@@ -91,7 +111,7 @@ function insideBundleResults(bundleRoot: string, path: string): boolean {
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
-    help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string' }, error: { type: 'string' }, report: { type: 'string' },
+    help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
     top: { type: 'string' }, 'min-count': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
@@ -198,7 +218,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     if (positionals.length !== 2 || !positionals[1]) throw new Error('verify requires one bundle directory.');
     if (Object.keys(values).some(key => !['input', 'profile', 'help'].includes(key))) throw new Error('Unsupported option for verify.');
     const result = await verifyBundle(resolve(positionals[1]), {
-      ...(values.input ? { input: await readBoundedFile(resolve(values.input)) } : {}),
+      ...(values.input ? { input: await inputContents(values.input, false) } : {}),
       ...(values.profile ? { profile: await readBoundedFile(resolve(values.profile), 1024 * 1024) } : {}),
     });
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
@@ -213,7 +233,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   const types = ['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual'];
   if (values.type !== undefined && !types.includes(values.type)) throw new Error('--type is not supported.');
   if (values.runtime !== undefined && !['browser', 'webview-ios', 'webview-android', 'unknown'].includes(values.runtime)) throw new Error('--runtime is not supported.');
-  let content: string;
+  let content: string | readonly string[];
   let inputFormat: 'auto' | 'json' | 'text' = format;
   if (values.error !== undefined) {
     if (values.format !== undefined) throw new Error('--format applies to --input; direct --error is a manual report.');
@@ -229,7 +249,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     inputFormat = 'json';
   } else {
     if (values.reproduce || values.precondition || values.expected || values['expected-source']) throw new Error('Reported context options require --error. Use manual JSON or a profile for file input.');
-    content = values.input === '-' ? await stdinText() : await readBoundedFile(resolve(values.input!));
+    content = await inputContents(values.input!, true);
   }
   const options: AnalyzeOptions = {
     format: inputFormat, ...(values.profile ? { profile: await readBoundedFile(resolve(values.profile), 1024 * 1024) } : {}),

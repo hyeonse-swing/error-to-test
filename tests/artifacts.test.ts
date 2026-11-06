@@ -4,10 +4,59 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { analyzeErrors } from '../src/analysis.ts';
-import { jsonText, readVerifiedBundle, renderReport, verifyBundle, writeBundle } from '../src/artifacts.ts';
+import { jsonText, readBoundedFile, readVerifiedBundle, renderReport, verifyBundle, writeBundle } from '../src/artifacts.ts';
 import { createProfileTemplate } from '../src/profile-template.ts';
 import { hash } from '../src/validation.ts';
 import type { Analysis } from '../src/types.ts';
+
+test('bounded input reads reject invalid UTF-8 and preserve valid BOM and multibyte bytes', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-utf8-'));
+  const file = join(temp, 'input.txt');
+  try {
+    for (const invalid of [Buffer.from([0x80]), Buffer.from([0x81]), Buffer.from([0xe3, 0x81])]) {
+      await writeFile(file, invalid);
+      await assert.rejects(readBoundedFile(file), /valid UTF-8/);
+    }
+    const valid = '\uFEFF오류가 발생했습니다\n at render (/app.js:1:1)';
+    await writeFile(file, valid);
+    assert.equal(await readBoundedFile(file, Buffer.byteLength(valid)), valid);
+    await assert.rejects(readBoundedFile(file, Buffer.byteLength(valid) - 1), /size limit/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('multi-file bundles verify all original bytes in order, never the manifest as a substitute', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-multi-verify-'));
+  const inputs = [
+    '\uFEFF' + JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ id: 'first', message: 'First failure' }] }),
+    JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ id: 'second', message: 'Second failure' }] }),
+  ];
+  try {
+    const analysis = analyzeErrors(inputs);
+    const descriptor = { schemaVersion: 'error-to-test/inputs-1', inputs: analysis.source.inputs };
+    assert.equal(analysis.source.sha256, hash(JSON.stringify(descriptor)));
+    const out = join(temp, 'analysis');
+    await writeBundle(out, analysis);
+    assert.deepEqual(await verifyBundle(out, { input: inputs }), { suite: true, reviewed: false, sourceChecked: true });
+    for (const changed of [inputs[0]!, [inputs[1]!, inputs[0]!], [inputs[0]!.replace(/^\uFEFF/, ''), inputs[1]!],
+      [inputs[0]!, inputs[1]! + '\n'], JSON.stringify(descriptor)]) {
+      await assert.rejects(verifyBundle(out, { input: changed }), /STALE_BUNDLE: Input changed/);
+    }
+    const report = await readFile(join(out, 'report.md'), 'utf8');
+    assert.match(report, /## Input files/);
+    assert.match(report, /Files: 2/);
+    for (const input of inputs) assert.ok(report.includes(hash(input)));
+    const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    assert.equal(provenance.inputSha256, analysis.source.sha256);
+    assert.equal(provenance.analysisSha256, hash(await readFile(join(out, 'analysis.json'), 'utf8')));
+
+    // Updating only the analysis hash cannot make an inconsistent file manifest valid.
+    analysis.source.inputs![0]!.byteLength++;
+    const altered = jsonText(analysis);
+    await writeFile(join(out, 'analysis.json'), altered);
+    await writeFile(join(out, 'provenance.json'), jsonText({ ...provenance, analysisSha256: hash(altered) }));
+    await assert.rejects(verifyBundle(out), /STALE_BUNDLE: The ordered input manifest/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
 
 test('report includes submitted manual reproduction, setup, and proposed steps in a verified bundle', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-report-'));

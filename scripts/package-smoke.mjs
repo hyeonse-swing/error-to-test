@@ -27,7 +27,7 @@ try {
     assert.equal(output, `${installedManifest.version}\n`);
   }
   const installedRoot = join(temp, 'node_modules/@ihyeon/error-to-test');
-  const runCli = args => execFileSync(join(temp, 'node_modules/.bin/error-to-test'), args, { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  const runCli = args => execFileSync(join(temp, 'node_modules/.bin/error-to-test'), args, { cwd: temp, encoding: 'utf8', stdio: 'pipe', timeout: 30_000 });
   const errorFile = join(temp, 'observed-error.txt');
   const initial = join(temp, 'initial');
   const profileFile = join(temp, 'review-profile.json');
@@ -123,6 +123,20 @@ try {
   runCli(['analyze', '--input', comparisonSources[0], '--baseline', comparisonBundles[0], '--out', unchanged]);
   assert.equal(JSON.parse(await readFile(join(unchanged, 'analysis.json'), 'utf8')).candidates.length, 0);
   assert.match(runCli(['verify', unchanged]), /Suite: none/);
+  const combined = join(temp, 'combined-inputs');
+  const combinedInputs = [comparisonSources[0], comparisonSources[1], comparisonSources[0]];
+  const inputArgs = combinedInputs.flatMap(input => ['--input', input]);
+  runCli(['analyze', ...inputArgs, '--min-count', '3', '--top', '1', '--out', combined]);
+  const combinedAnalysis = JSON.parse(await readFile(join(combined, 'analysis.json'), 'utf8'));
+  assert.equal(combinedAnalysis.source.inputs.length, 3);
+  assert.equal(combinedAnalysis.coverage.inputCount, 10);
+  assert.equal(combinedAnalysis.coverage.duplicates, 3);
+  assert.equal(combinedAnalysis.groups.length, 4);
+  assert.equal(combinedAnalysis.candidates.length, 1);
+  assert.match(runCli(['verify', combined, ...inputArgs]), /original input: checked/);
+  assert.throws(() => runCli(['verify', combined, '--input', comparisonSources[0], '--input', comparisonSources[1]]));
+  await writeFile(join(temp, 'multi-input-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {analyzeErrors,analyzeWithBaseline,verifyBundle,parseInput} from '@ihyeon/error-to-test';\nconst [bundle,...paths]=process.argv.slice(2);\nconst contents=await Promise.all(paths.map(path=>readFile(path,'utf8')));\nconst analysis=analyzeErrors(contents,{minCount:3,top:1});\nassert.deepEqual(analysis,JSON.parse(await readFile(bundle+'/analysis.json','utf8')));\nassert.equal(parseInput(contents).coverage.duplicates,3);\nassert.equal((await verifyBundle(bundle,{input:contents})).sourceChecked,true);\nassert.equal((await analyzeWithBaseline(contents,bundle)).candidates.length,0);\nassert.deepEqual(analyzeErrors([contents[0]]),analyzeErrors(contents[0]));\n`);
+  execFileSync(process.execPath, ['multi-input-consumer.mjs', combined, ...combinedInputs], { cwd: temp, stdio: 'pipe' });
   for (let index = 0; index < comparisonBundles.length; index++) {
     assert.match(runCli(['verify', comparisonBundles[index], '--input', comparisonSources[index]]), /original input: checked/);
   }
@@ -137,5 +151,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile/results/comparison/baseline workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile/results/comparison/baseline/multi-input workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

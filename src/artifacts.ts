@@ -1,8 +1,10 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { isUtf8 } from 'node:buffer';
 import { dirname, resolve } from 'node:path';
 import { exportFlowQa } from './exports/flow-qa.ts';
 import { hash, record, text } from './validation.ts';
 import { redactText } from './redact.ts';
+import { inputSource, validateInputSource } from './input-source.ts';
 import type { Analysis } from './types.ts';
 
 export function jsonText(value: unknown): string { return `${JSON.stringify(value, null, 2)}\n`; }
@@ -24,6 +26,11 @@ export function renderReport(analysis: Analysis): string {
     `Duplicate records: ${analysis.coverage.duplicates} · Filtered records: ${analysis.coverage.filtered}`, '',
     'Counts describe the supplied records. They are not error rates, affected-user counts, or proof of complete collection.',
     'Drafts require review. A passing TC proves only its assertions; it does not automatically close the source issue.', ''];
+  if (analysis.source.inputs) lines.push('## Input files', '', literal([
+    `Files: ${analysis.source.inputs.length} · Order: the supplied --input order`,
+    'The source SHA-256 commits to the ordered file hashes and byte lengths. Verify with every original file in the same order.',
+    ...analysis.source.inputs.map((input, index) => `${index + 1}. SHA-256: ${input.sha256} · Bytes: ${input.byteLength}`),
+  ].join('\n')), '');
   if (analysis.selection) lines.push('## Baseline candidate selection', '', literal([
     'Mode: only-current (signatures absent from the supplied baseline)',
     `Baseline input SHA-256: ${analysis.selection.baseline.inputSha256}`,
@@ -92,11 +99,12 @@ export async function writeBundle(directory: string, analysis: Analysis, options
 export async function readBoundedFile(path: string, maxBytes = 10 * 1024 * 1024): Promise<string> {
   const info = await stat(path);
   if (!info.isFile() || info.size > maxBytes) throw new Error('Input must be a regular file within the size limit.');
-  const content = await readFile(path, 'utf8');
-  if (Buffer.byteLength(content) > maxBytes) throw new Error('Input exceeded the size limit while reading.');
-  return content;
+  const content = await readFile(path);
+  if (content.length > maxBytes) throw new Error('Input exceeded the size limit while reading.');
+  if (!isUtf8(content)) throw new Error('Input must be valid UTF-8.');
+  return content.toString('utf8');
 }
-export async function readVerifiedBundle(directory: string, options: { input?: string; profile?: string } = {}): Promise<{
+export async function readVerifiedBundle(directory: string, options: { input?: string | readonly string[]; profile?: string } = {}): Promise<{
   analysis: Record<string, unknown>;
   provenance: Record<string, unknown>;
   verification: { suite: boolean; reviewed: boolean; sourceChecked: boolean };
@@ -114,6 +122,10 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
   const analysis = parse(analysisText, 'analysis');
   if (analysis.schemaVersion !== 'error-to-test/analysis-1') throw new Error('Unsupported analysis contract.');
   const source = record(analysis.source, 'analysis.source');
+  if (source.inputs !== undefined) {
+    try { validateInputSource(source); }
+    catch { throw new Error('STALE_BUNDLE: The ordered input manifest is invalid or does not match the source hash.'); }
+  }
   const flow = await readBoundedFile(resolve(root, 'flows/error-to-test.md'), 8 * 1024 * 1024);
   if (hash(flow) !== provenance.flowSha256 || source.sha256 !== provenance.inputSha256 || source.profileSha256 !== provenance.profileSha256) throw new Error('STALE_BUNDLE: Analysis, flow, and provenance no longer match.');
   if (!Array.isArray(analysis.candidates)) throw new Error('Analysis candidates are missing.');
@@ -130,10 +142,17 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
     if (suite.schemaVersion !== 'flow-qa/suite-1' || suiteSource.file !== 'flows/error-to-test.md' || suiteSource.sha256 !== provenance.flowSha256) throw new Error('STALE_BUNDLE: Suite source no longer matches the flow.');
     suiteExists = true;
   }
-  if (options.input !== undefined && hash(options.input) !== text(provenance.inputSha256, 'provenance.inputSha256')) throw new Error('STALE_BUNDLE: Input changed since analysis.');
+  if (options.input !== undefined) {
+    const provided = inputSource(options.input);
+    const stored = source.inputs as Analysis['source']['inputs'];
+    const sameFiles = provided.inputs === undefined ? stored === undefined : stored !== undefined &&
+      provided.inputs.length === stored.length && provided.inputs.every((input, index) =>
+        input.sha256 === stored[index]!.sha256 && input.byteLength === stored[index]!.byteLength);
+    if (!sameFiles || provided.sha256 !== text(provenance.inputSha256, 'provenance.inputSha256')) throw new Error('STALE_BUNDLE: Input changed since analysis. Supply every original file in the same order.');
+  }
   if (options.profile !== undefined && hash(options.profile) !== provenance.profileSha256) throw new Error('STALE_BUNDLE: Profile changed since analysis.');
   return { analysis, provenance, verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
 }
-export async function verifyBundle(directory: string, options: { input?: string; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
+export async function verifyBundle(directory: string, options: { input?: string | readonly string[]; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
   return (await readVerifiedBundle(directory, options)).verification;
 }

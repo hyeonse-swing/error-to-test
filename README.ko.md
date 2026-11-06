@@ -44,6 +44,23 @@ error-to-test analyze --input errors.json --min-count 3 --top 10 --out ./recurri
 
 JavaScript API에서는 `analyzeErrors(content, { minCount: 3, top: 10 })`으로 같은 기준을 적용합니다.
 
+`--input`을 반복하면 **여러 로그 파일을 함께 분석**할 수 있습니다.
+
+```sh
+error-to-test analyze --input morning.json --input afternoon.json --min-count 3 --top 10 --out ./combined
+error-to-test verify ./combined --input morning.json --input afternoon.json
+```
+
+최대 50개 파일, 합산 10 MiB·원본 10,000건까지 받습니다. 중복도 한도에 포함합니다. SDK JSON 내보내기·배열끼리, 수동 JSON끼리, 텍스트끼리처럼 같은 입력 형식끼리 합칩니다. 텍스트는 파일 하나가 보고서 한 건이며, `--format`과 메타데이터·필터는 모든 파일에 적용합니다. 표준 입력(`--input -`)은 `analyze`에서 단독으로 사용하고, `verify`에는 원본 파일을 지정하세요.
+
+파일과 표준 입력은 올바른 UTF-8이어야 합니다. 잘못된 바이트가 같은 대체 문자로 변환되어 원본 변경을 놓치지 않도록 해시 계산 전에 잘못된 인코딩을 거부합니다.
+
+파일 전체에서 프로젝트·레코드 ID 중복을 먼저 검사한 뒤 필터·그룹 순위·TC 선택을 적용합니다. 동일한 레코드는 한 번만 세며, 같은 ID의 원본 내용이 다르면 정제 후 같아 보이거나 필터로 제외될 데이터여도 거부합니다. 하나라도 부분 내보내기이면 전체 결과에도 부분 입력으로 표시합니다. 건수는 제공한 로그 기준이며 실제 발생률을 의미하지 않습니다.
+
+여러 파일의 원본 SHA-256과 UTF-8 바이트 수를 입력 순서대로 `analysis.source.inputs`와 보고서에 남깁니다. 파일명과 원문은 저장하지 않습니다. `source.sha256`은 `JSON.stringify({ schemaVersion: 'error-to-test/inputs-1', inputs })`의 SHA-256이며, 각 항목은 `{ sha256, byteLength }` 순서입니다. 이 목록도 분석 해시로 검증합니다. 원본 확인에는 BOM·공백까지 동일한 모든 파일을 같은 순서로 지정해야 합니다. 단일 입력의 기존 바이트 해시와 결과 형식은 유지합니다.
+
+API에서도 `analyzeErrors([firstContent, secondContent], options)`, `parseInput([firstContent, secondContent], options)`, `await analyzeWithBaseline([firstContent, secondContent], baselineDirectory, options)`으로 사용합니다. 원본 검증은 `await verifyBundle(directory, { input: [firstContent, secondContent] })`입니다. 원소 하나의 배열은 문자열 하나와 동일합니다. 프로필 보완·이전 분석 대비 선택에도 같은 입력 순서를 유지하고, 기존 맥락 질문과 검토 조건을 적용합니다.
+
 두 분석 결과는 `compare`로 비교할 수 있습니다. 릴리스가 바뀐 뒤 어떤 오류 서명이 다시 관측됐는지 확인할 때 사용합니다.
 
 ```sh

@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
 import type { ErrorObservation, EventType, ParsedInput, Runtime, WebStep } from './types.ts';
 import { record, text, optionalText, strings, timestamp, parseWebSteps, hash } from './validation.ts';
 import { redactText, safeUrl } from './redact.ts';
+import { inputSource } from './input-source.ts';
 
 export interface ParseInputOptions {
   format?: 'auto' | 'json' | 'text';
@@ -17,7 +17,6 @@ export interface ParseInputOptions {
 
 const TYPES = new Set<EventType>(['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual']);
 const RUNTIMES = new Set<Runtime>(['browser', 'webview-ios', 'webview-android', 'unknown']);
-const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_RECORDS = 10_000;
 const LOGGER_PREFIX = /^\[(?:ERROR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL|vite|timestamp|\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})?)?|\d{2}:\d{2}:\d{2})\][ \t]+\S/i;
 
@@ -165,24 +164,22 @@ function manualError(value: unknown, index: number, defaults: ParseInputOptions)
   };
 }
 
-export function parseInput(content: string, options: ParseInputOptions = {}): ParsedInput {
-  if (Buffer.byteLength(content, 'utf8') > MAX_BYTES) throw new Error('Input exceeds 10 MiB');
-  if (!content.trim()) throw new Error('Input is empty');
-  const from = options.from === undefined ? undefined : timestamp(options.from, 'from');
-  const to = options.to === undefined ? undefined : timestamp(options.to, 'to');
-  if (from && to && from > to) throw new Error('from must not exceed to');
-  const format = options.format ?? 'auto';
-  if (!['auto', 'json', 'text'].includes(format)) throw new Error('Invalid input format');
+interface RawDocument {
+  kind: ParsedInput['coverage']['kind'];
+  partial: boolean;
+  raw: unknown[];
+}
+
+function decodeDocument(content: string, format: NonNullable<ParseInputOptions['format']>): RawDocument {
   const trimmed = content.trimStart();
   const isJson = format === 'json' || (format === 'auto' && /^[\[{]/.test(trimmed) && !LOGGER_PREFIX.test(trimmed));
-  let observations: ErrorObservation[];
-  let kind: ParsedInput['coverage']['kind'];
-  let partial = false;
-  let raw: unknown[];
   if (isJson) {
     let parsed: unknown;
     // Ignore a file's BOM only while parsing; provenance hashes the original content.
     try { parsed = JSON.parse(content.replace(/^\uFEFF/, '')); } catch { throw new Error('Malformed JSON input'); }
+    let kind: RawDocument['kind'];
+    let partial = false;
+    let raw: unknown[];
     if (Array.isArray(parsed)) {
       kind = 'browser-error-json';
       raw = parsed;
@@ -201,16 +198,39 @@ export function parseInput(content: string, options: ParseInputOptions = {}): Pa
       } else throw new Error('Unsupported input schemaVersion');
     }
     if (raw.length === 0) throw new Error('Input has no records');
-    if (raw.length > MAX_RECORDS) throw new Error('Input exceeds 10000 records');
-    observations = raw.map((item, index) => kind === 'browser-error-json' ? browserEvent(item, index) : manualError(item, index, options));
-  } else {
-    kind = 'manual-text';
-    const lines = content.trim().split(/\r?\n/);
-    const message = lines.shift()!.trim();
-    if (!message) throw new Error('Error message is empty');
-    observations = [manualError({ message, ...(lines.length ? { stack: lines.join('\n') } : {}) }, 0, options)];
-    raw = [content];
+    return { kind, partial, raw };
   }
+  const lines = content.trim().split(/\r?\n/);
+  const message = lines.shift()!.trim();
+  if (!message) throw new Error('Error message is empty');
+  // Text is one logical report. Its canonical raw identity must not depend on
+  // whitespace outside the parsed message and stack.
+  return { kind: 'manual-text', partial: false,
+    raw: [{ message, ...(lines.length ? { stack: lines.join('\n') } : {}) }] };
+}
+
+export function parseInput(content: string | readonly string[], options: ParseInputOptions = {}): ParsedInput {
+  const source = inputSource(content);
+  const files = typeof content === 'string' ? [content] : content;
+  if (files.some(file => !file.trim())) throw new Error('Input is empty');
+  const from = options.from === undefined ? undefined : timestamp(options.from, 'from');
+  const to = options.to === undefined ? undefined : timestamp(options.to, 'to');
+  if (from && to && from > to) throw new Error('from must not exceed to');
+  const format = options.format ?? 'auto';
+  if (!['auto', 'json', 'text'].includes(format)) throw new Error('Invalid input format');
+  let kind: ParsedInput['coverage']['kind'] | undefined;
+  let partial = false;
+  const raw: unknown[] = [];
+  for (const file of files) {
+    const document = decodeDocument(file, format);
+    if (kind !== undefined && document.kind !== kind) throw new Error('Input files must have the same source kind.');
+    kind = document.kind;
+    partial ||= document.partial;
+    if (raw.length + document.raw.length > MAX_RECORDS) throw new Error('Input exceeds 10000 records');
+    raw.push(...document.raw);
+  }
+  const observations = raw.map((item, index) => kind === 'browser-error-json'
+    ? browserEvent(item, index) : manualError(item, index, options));
   const inputCount = raw.length;
   const seen = new Map<string, string>();
   const unique: ErrorObservation[] = [];
@@ -226,6 +246,7 @@ export function parseInput(content: string, options: ParseInputOptions = {}): Pa
     } else { seen.set(key, source); unique.push(item); }
   }
   const warnings: string[] = [];
+  if (source.inputs) warnings.push(`Combined ${source.inputs.length} input files in supplied order; counts describe the supplied records across files, not global rates.`);
   if (partial) warnings.push('Source export is partial; observed counts may be incomplete.');
   if (duplicates) warnings.push(`${duplicates} duplicate record(s) removed.`);
   if (from || to) warnings.push('Date filtering applies only to reports with observed timestamps.');
@@ -245,9 +266,9 @@ export function parseInput(content: string, options: ParseInputOptions = {}): Pa
   if ((from || to) && unique.some((item) => !item.occurredAt)) warnings.push('Undated manual reports were excluded by date filters.');
   return {
     observations: selected,
-    coverage: { kind, frequency: kind === 'browser-error-json' ? 'captured-events' : 'submitted-reports',
+    coverage: { kind: kind!, frequency: kind === 'browser-error-json' ? 'captured-events' : 'submitted-reports',
       partial, inputCount, duplicates, filtered, retention: 'unknown',
       ...(from || to ? { period: { ...(from ? { from } : {}), ...(to ? { to } : {}) } } : {}) },
-    sha256: createHash('sha256').update(content).digest('hex'), warnings,
+    sha256: source.sha256, ...(source.inputs ? { inputs: source.inputs } : {}), warnings,
   };
 }
