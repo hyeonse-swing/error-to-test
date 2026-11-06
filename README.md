@@ -174,6 +174,25 @@ For each scenario, fill `requirement` and `expectedSource`, establish `precondit
 
 `init-profile` requires a new output file, refuses stale bundles and empty candidate selections, and never overwrites an existing file. The original analysis artifacts remain unchanged. The API equivalent is `createProfileTemplate(analysis)`; its result is an incomplete `error-to-test/profile-1` object for editing, not an execution-ready profile.
 
+### Extend an existing profile
+
+Keep existing scenario rules and add review templates for selected groups that they do not cover:
+
+```sh
+error-to-test analyze --input current-errors.jsonl --format jsonl --out ./current-analysis
+error-to-test init-profile ./current-analysis --profile ./existing-profile.json --out ./expanded-profile.json
+# Fill only the new blank requirements, sources, setup, actions, and assertions.
+error-to-test analyze --input current-errors.jsonl --format jsonl --profile ./expanded-profile.json --out ./expanded-analysis
+```
+
+The existing profile must pass normal profile validation: its requirements and expectation sources must already be filled. Profile name, scenario order, IDs, match conditions, steps, expectations, setup flags, and questions are retained as validated profile values. Unknown fields and file formatting are not preserved. Existing questions and unconfirmed setup still block cases.
+
+Coverage uses exactly the same matching rules as TC generation, with all supplied predicates combined. An existing broad rule can cover several selected groups within its original conditions. An exact `match.groupId` from another release remains exact; its steps and expectation are not copied to a new group. Only uncovered selected groups receive new blank templates in ranked order. New scenario IDs gain deterministic numeric suffixes on collision; existing IDs stay unchanged. If all selected groups are covered, the result contains only the existing rules.
+
+New templates retain blank expectation fields, `setupConfirmed: false`, and the review question. Fill them explicitly before reanalysis, using the original inputs, metadata, filters, and optional baseline. The usual review gate applies. Existing scenarios are never automatically deleted; the combined profile must stay within 100 scenarios and 1 MiB. Sensitive existing metadata or execution steps are rejected before writing. Output must be a new file outside the bundle's `results` directory, for both basic and extended templates.
+
+The API is `createProfileTemplate(analysis, { profile: existingProfile })`; `profile` accepts an object containing only JSON values or a JSON string, including one leading BOM, within 1 MiB. Omit undefined optional properties from object inputs. The function does not mutate either input. Without `profile`, it produces the original blank template.
+
 ## Review and use Flow QA
 
 Generated files (Flow QA source is limited to 128 KB; suite JSON to 512 KiB):

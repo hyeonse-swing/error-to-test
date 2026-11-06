@@ -394,6 +394,85 @@ test('init-profile guides manual and browser bundles through explicit review gat
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('init-profile extends a JSONL profile without changing prior rules or approving new cases', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-profile-extend-'));
+  try {
+    const input = join(temp, 'events.jsonl');
+    const old = { message: 'Error: old panel', page: '/old', release: 'old', runtime: 'browser' };
+    const fresh = { message: 'Error: new panel', page: '/new', release: 'new', runtime: 'browser' };
+    await writeFile(input, `${JSON.stringify(old)}\n`);
+    const firstBundle = join(temp, 'first');
+    assert.equal(run(['analyze', '--input', input, '--format', 'jsonl', '--out', firstBundle]).status, 0);
+    const existing = join(temp, 'existing.json');
+    assert.equal(run(['init-profile', firstBundle, '--out', existing]).status, 0);
+    const original = JSON.parse(await readFile(existing, 'utf8'));
+    const oldRule = original.scenarios[0];
+    oldRule.requirement = 'The old panel explains the error.';
+    oldRule.expectedSource = 'Reviewed local contract';
+    oldRule.preconditions = ['Local demo is open'];
+    oldRule.setupConfirmed = true;
+    oldRule.questions = [];
+    oldRule.steps.push({ type: 'assertText', locator: { by: 'role', value: 'status' }, expected: 'Old panel error', match: 'equals' });
+    original.name = 'Existing app profile';
+    await writeFile(existing, JSON.stringify(original));
+    const existingBytes = await readFile(existing);
+    await writeFile(input, `${JSON.stringify(old)}\n${JSON.stringify(fresh)}\n`);
+    const nextBundle = join(temp, 'next');
+    assert.equal(run(['analyze', '--input', input, '--format', 'jsonl', '--out', nextBundle]).status, 0);
+    const bundleBytes = await readFile(join(nextBundle, 'analysis.json'));
+    const extended = join(temp, 'extended.json');
+    const result = run(['init-profile', nextBundle, '--profile', existing, '--out', extended]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Existing rules were retained/);
+    assert.match(result.stdout, /review any new blank scenarios manually/);
+    const next = JSON.parse(await readFile(extended, 'utf8'));
+    const currentAnalysis = JSON.parse(bundleBytes.toString('utf8'));
+    assert.equal(next.name, original.name);
+    assert.deepEqual(next.scenarios[0], oldRule);
+    assert.equal(next.scenarios.length, 2);
+    assert.deepEqual(next.scenarios[1].match, { groupId: currentAnalysis.groups.find((group: { pagePath: string }) => group.pagePath === '/new').id });
+    assert.equal(next.scenarios[1].requirement, '');
+    assert.equal(next.scenarios[1].setupConfirmed, false);
+    assert.ok(next.scenarios[1].questions.length > 0);
+    assert.deepEqual(await readFile(existing), existingBytes);
+    assert.deepEqual(await readFile(join(nextBundle, 'analysis.json')), bundleBytes);
+    assert.equal(run(['verify', nextBundle, '--input', input]).status, 0);
+
+    const pending = join(temp, 'pending');
+    const pendingRun = run(['analyze', '--input', input, '--format', 'jsonl', '--profile', extended, '--out', pending]);
+    assert.equal(pendingRun.status, 1);
+    await assert.rejects(stat(pending), { code: 'ENOENT' });
+    const newRule = next.scenarios[1];
+    newRule.requirement = 'The new panel explains the error.';
+    newRule.expectedSource = 'Reviewed local contract';
+    newRule.preconditions = ['Local demo is open'];
+    newRule.setupConfirmed = true;
+    newRule.questions = [];
+    newRule.steps.push({ type: 'assertText', locator: { by: 'role', value: 'status' }, expected: 'New panel error', match: 'equals' });
+    await writeFile(extended, JSON.stringify(next));
+    const draft = join(temp, 'draft');
+    assert.equal(run(['analyze', '--input', input, '--format', 'jsonl', '--profile', extended, '--out', draft]).status, 0);
+    const draftAnalysis = JSON.parse(await readFile(join(draft, 'analysis.json'), 'utf8'));
+    assert.ok(draftAnalysis.candidates.every((candidate: { state: string }) => candidate.state === 'draft'), JSON.stringify(draftAnalysis.candidates));
+    assert.equal(run(['verify', draft, '--input', input, '--profile', extended]).status, 0);
+    const reviewed = join(temp, 'reviewed');
+    assert.equal(run(['analyze', '--input', input, '--format', 'jsonl', '--profile', extended, '--reviewed', '--out', reviewed]).status, 0);
+    assert.equal(run(['verify', reviewed, '--input', input, '--profile', extended]).status, 0);
+
+    const covered = join(temp, 'covered.json');
+    assert.equal(run(['init-profile', firstBundle, '--profile', existing, '--out', covered]).status, 0);
+    assert.deepEqual(JSON.parse(await readFile(covered, 'utf8')), original);
+    const pendingOld = join(temp, 'pending-old.json');
+    const pendingProfile = structuredClone(original);
+    pendingProfile.scenarios[0].questions = ['Confirm the old setup'];
+    pendingProfile.scenarios[0].setupConfirmed = false;
+    await writeFile(pendingOld, JSON.stringify(pendingProfile));
+    const pendingExtended = join(temp, 'pending-extended.json');
+    assert.equal(run(['init-profile', nextBundle, '--profile', pendingOld, '--out', pendingExtended]).status, 0);
+    assert.deepEqual(JSON.parse(await readFile(pendingExtended, 'utf8')).scenarios[0], pendingProfile.scenarios[0]);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('init-profile refuses stale, empty, and invalid requests before writing a file', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-init-invalid-'));
   try {
@@ -437,6 +516,81 @@ test('init-profile refuses stale, empty, and invalid requests before writing a f
     assert.equal(staleAnalysis.status, 1);
     assert.match(staleAnalysis.stderr, /STALE_BUNDLE/);
     await assert.rejects(stat(target), { code: 'ENOENT' });
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('init-profile extension rejects unsafe profiles and outputs before creating files', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-extend-invalid-'));
+  try {
+    const input = join(temp, 'source.json');
+    await writeFile(input, JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ message: 'Error: failure', page: '/items' }] }));
+    const bundle = join(temp, 'bundle');
+    assert.equal(run(['analyze', '--input', input, '--out', bundle]).status, 0);
+    const profile = join(temp, 'existing.json');
+    assert.equal(run(['init-profile', bundle, '--out', profile]).status, 0);
+    const valid = JSON.parse(await readFile(profile, 'utf8'));
+    valid.scenarios[0].requirement = 'The page explains the failure.';
+    valid.scenarios[0].expectedSource = 'Reviewed local contract';
+    valid.scenarios[0].preconditions = ['Local demo is open'];
+    valid.scenarios[0].setupConfirmed = true;
+    valid.scenarios[0].questions = [];
+    valid.scenarios[0].steps.push({ type: 'assertText', locator: { by: 'role', value: 'status' }, expected: 'Failure', match: 'equals' });
+    await writeFile(profile, JSON.stringify(valid));
+    const profileBytes = await readFile(profile);
+    const outside = join(temp, 'new-dir', 'extended.json');
+    for (const [name, content] of [
+      ['bad-json', '{broken'],
+      ['stale-schema', JSON.stringify({ ...valid, schemaVersion: 'error-to-test/profile-0' })],
+      ['sensitive-step', JSON.stringify({ ...valid, scenarios: [{ ...valid.scenarios[0], steps: [{ type: 'open', path: '/items?token=secret' }] }] })],
+      ['two-bom', `\uFEFF\uFEFF${JSON.stringify(valid)}`],
+      ['oversize', ' '.repeat(1024 * 1024 + 1)],
+      ['too-many-rules', JSON.stringify({ ...valid, scenarios: Array.from({ length: 101 }, (_, index) => ({ ...valid.scenarios[0], id: `rule-${index}` })) })],
+    ] as const) {
+      const invalid = join(temp, `${name}.json`);
+      await writeFile(invalid, content);
+      const result = run(['init-profile', bundle, '--profile', invalid, '--out', outside]);
+      assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+      await assert.rejects(stat(outside), { code: 'ENOENT' });
+    }
+    const credentialLikeId = ['ghp', 'abcdefghijklmnop'].join('_');
+    for (const [name, scenario] of [
+      ['scenario-id', { ...valid.scenarios[0], id: credentialLikeId }],
+      ['match-group-id', { ...valid.scenarios[0], match: { groupId: credentialLikeId } }],
+    ] as const) {
+      const unsafe = join(temp, `${name}.json`);
+      const unsafeBytes = Buffer.from(JSON.stringify({ ...valid, scenarios: [scenario] }));
+      await writeFile(unsafe, unsafeBytes);
+      const result = run(['init-profile', bundle, '--profile', unsafe, '--out', outside]);
+      assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+      assert.equal(result.stderr.includes(credentialLikeId), false);
+      await assert.rejects(stat(outside), { code: 'ENOENT' });
+      assert.deepEqual(await readFile(unsafe), unsafeBytes);
+    }
+    const empty = run(['init-profile', bundle, '--profile', '  ', '--out', outside]);
+    assert.equal(empty.status, 1);
+    await assert.rejects(stat(outside), { code: 'ENOENT' });
+    const existingResult = run(['init-profile', bundle, '--profile', profile, '--out', profile]);
+    assert.equal(existingResult.status, 1);
+    assert.match(existingResult.stderr, /already exists/);
+    assert.deepEqual(await readFile(profile), profileBytes);
+    const alias = join(temp, 'profile-alias.json');
+    await symlink(profile, alias);
+    assert.equal(run(['init-profile', bundle, '--profile', profile, '--out', alias]).status, 1);
+    assert.deepEqual(await readFile(profile), profileBytes);
+    for (const out of [join(bundle, 'results', 'profile.json'), join(bundle, 'RESULTS', 'profile.json')]) {
+      const result = run(['init-profile', bundle, '--out', out]);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /bundle results directory/);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+    const resultsAlias = join(temp, 'results-alias');
+    await mkdir(join(bundle, 'results'));
+    await symlink(join(bundle, 'results'), resultsAlias);
+    const aliasOut = join(resultsAlias, 'extended.json');
+    const aliasResult = run(['init-profile', bundle, '--profile', profile, '--out', aliasOut]);
+    assert.equal(aliasResult.status, 1, aliasResult.stderr);
+    await assert.rejects(stat(aliasOut), { code: 'ENOENT' });
+    assert.equal(run(['verify', bundle, '--input', input]).status, 0);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 

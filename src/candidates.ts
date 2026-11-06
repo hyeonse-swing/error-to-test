@@ -27,7 +27,7 @@ function profileStrings(value: unknown, label: string): string[] {
   return strings(value, label).map((item, index) => profileText(item, `${label}[${index}]`));
 }
 
-function stepsContainSensitiveData(steps: WebStep[]): boolean {
+export function stepsContainSensitiveData(steps: WebStep[]): boolean {
   const credentialFill = steps.some((step) => step.type === 'fill' &&
     /password|passwd|secret|token|api[_-]?key|authorization|cookie|session/i.test(
       `${step.locator.value} ${'name' in step.locator ? step.locator.name ?? '' : ''}`));
@@ -90,7 +90,7 @@ function confirmed(value: unknown, label: string): boolean {
   return value;
 }
 
-function matches(rule: ScenarioRule, group: IssueGroup): boolean {
+export function matchesScenarioRule(rule: ScenarioRule, group: IssueGroup): boolean {
   const match = rule.match;
   return (match.groupId === undefined || match.groupId === group.id)
     && (!match.type || match.type === group.type)
@@ -172,7 +172,7 @@ function createOne(group: IssueGroup, rule?: ScenarioRule): TestCandidate {
 
 export function createCandidates(groups: IssueGroup[], profile?: AppProfile): TestCandidate[] {
   return groups.flatMap((group) => {
-    const rules = (profile?.scenarios ?? []).filter((rule) => matches(rule, group)).sort((a, b) => a.id.localeCompare(b.id));
+    const rules = (profile?.scenarios ?? []).filter((rule) => matchesScenarioRule(rule, group)).sort((a, b) => a.id.localeCompare(b.id));
     return rules.length ? rules.map((rule) => createOne(group, rule)) : [createOne(group)];
   });
 }

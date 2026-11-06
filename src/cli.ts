@@ -22,6 +22,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   cat error.txt | error-to-test analyze --input - --format text --out new-directory
   error-to-test verify new-directory [--input errors-1.json --input errors-2.json] [--profile profile.json]
   error-to-test init-profile new-directory --out profile.json
+  error-to-test init-profile new-directory --profile existing.json --out extended.json
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md]
@@ -32,7 +33,7 @@ Options:
   --format auto|json|jsonl|text Analyze input format; JSONL requires explicit selection and one record per line; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
   --format text|json      Compare format (default: text Markdown)
-  --profile FILE         Confirmed app scenarios and explicit assertions (optional)
+  --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
   --baseline DIRECTORY   Select only signatures absent from this verified bundle, before --min-count and --top; retain all groups in analysis.json (analyze only)
   --project NAME         Metadata for a manual report
   --environment NAME    Metadata for a manual report
@@ -133,20 +134,27 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   const command = positionals[0];
   if (command === 'init-profile') {
     if (positionals.length !== 2 || !positionals[1] || !values.out) throw new Error('init-profile requires one bundle directory and --out FILE.');
-    if (Object.keys(values).some(key => !['out', 'help'].includes(key))) throw new Error('Unsupported option for init-profile. Use only --out FILE.');
-    const { analysis } = await readVerifiedBundle(resolve(positionals[1]));
+    if (Object.keys(values).some(key => !['out', 'profile', 'help'].includes(key))) throw new Error('Unsupported option for init-profile. Use only --profile FILE and --out FILE.');
+    if (values.profile !== undefined && !values.profile.trim()) throw new Error('--profile requires a nonempty file path.');
+    const bundle = resolve(positionals[1]);
+    const { analysis } = await readVerifiedBundle(bundle);
     if (analysis.schemaVersion !== 'error-to-test/analysis-1' || !Array.isArray(analysis.groups) || !Array.isArray(analysis.candidates)) throw new Error('Unsupported analysis contract.');
-    const profile = createProfileTemplate(analysis as unknown as Analysis);
+    const profile = values.profile === undefined
+      ? createProfileTemplate(analysis as unknown as Analysis)
+      : createProfileTemplate(analysis as unknown as Analysis, { profile: await readBoundedFile(resolve(values.profile), 1024 * 1024) });
     const content = jsonText(profile);
     if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('The generated profile exceeds 1 MiB. Narrow the selected groups.');
     const out = resolve(values.out);
+    if (insideBundleResults(await realpath(bundle), await canonicalOutput(out))) {
+      throw new Error('The profile cannot be written inside the bundle results directory. Choose an outside --out FILE path.');
+    }
     await mkdir(dirname(out), { recursive: true });
     try { await writeFile(out, content, { flag: 'wx', mode: 0o600 }); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output file already exists. Choose a new --out FILE path.');
       throw error;
     }
-    process.stdout.write(`Profile template written: ${out}\nFill requirement, expectedSource, preconditions, and steps; confirm setupConfirmed and clear answered questions. Then rerun analyze with the original input and --profile ${out}.\n`);
+    process.stdout.write(`Profile template written: ${out}\n${values.profile === undefined ? '' : 'Existing rules were retained; fill and review any new blank scenarios manually. This does not approve the profile.\n'}Fill requirement, expectedSource, preconditions, and steps; confirm setupConfirmed and clear answered questions. Then rerun analyze with the original input and --profile ${out}.\n`);
     return;
   }
   if (command === 'link-run') {

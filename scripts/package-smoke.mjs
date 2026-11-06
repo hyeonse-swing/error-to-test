@@ -51,6 +51,40 @@ try {
   const refinedSuite = JSON.parse(await readFile(join(reviewed, 'cases/error-to-test.json'), 'utf8'));
   assert.ok(refinedSuite.cases[0].questions.some(question => question.includes('Review this draft')));
   assert.match(runCli(['verify', reviewed, '--input', errorFile, '--profile', profileFile]), /Suite: present; review: pending; original input: checked/);
+  const extensionInput = join(temp, 'additional-errors.jsonl');
+  const extensionBundle = join(temp, 'additional-analysis');
+  const expandedFile = join(temp, 'expanded-profile.json');
+  await writeFile(extensionInput, [
+    { id: 'known', message: 'TypeError: missing item', stack: '    at render (/app.js:10:2)' },
+    { id: 'new', message: 'ReferenceError: selection is not defined', stack: '    at select (/app.js:20:2)' },
+  ].map(error => JSON.stringify(error)).join('\n'));
+  runCli(['analyze', '--input', extensionInput, '--format', 'jsonl', '--page', '/items', '--runtime', 'browser', '--out', extensionBundle]);
+  runCli(['init-profile', extensionBundle, '--profile', profileFile, '--out', expandedFile]);
+  const expanded = JSON.parse(await readFile(expandedFile, 'utf8'));
+  assert.equal(expanded.name, profile.name);
+  assert.equal(expanded.scenarios.length, 2);
+  assert.deepEqual(expanded.scenarios[0], profile.scenarios[0]);
+  assert.equal(expanded.scenarios[1].requirement, '');
+  assert.equal(expanded.scenarios[1].expectedSource, '');
+  assert.equal(expanded.scenarios[1].setupConfirmed, false);
+  assert.ok(expanded.scenarios[1].questions.length);
+  await writeFile(join(temp, 'profile-extension-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {createProfileTemplate} from '@ihyeon/error-to-test';\nconst analysis=JSON.parse(await readFile(process.argv[2],'utf8'));\nconst profile=await readFile(process.argv[3],'utf8');\nconst expected=JSON.parse(await readFile(process.argv[4],'utf8'));\nassert.deepEqual(createProfileTemplate(analysis,{profile}),expected);\nassert.deepEqual(createProfileTemplate(analysis,{profile:JSON.parse(profile)}),expected);\n`);
+  execFileSync(process.execPath, ['profile-extension-consumer.mjs', join(extensionBundle, 'analysis.json'), profileFile, expandedFile], { cwd: temp, stdio: 'pipe' });
+  Object.assign(expanded.scenarios[1], {
+    requirement: 'Selection is shown', expectedSource: 'Reviewed demo requirement', setupConfirmed: true, questions: [],
+    preconditions: ['Demo data is ready'], steps: [{ type: 'open', path: '/items' },
+      { type: 'assertVisible', locator: { by: 'text', value: 'Selection' }, visible: true }],
+  });
+  await writeFile(expandedFile, JSON.stringify(expanded));
+  const extendedAnalysis = join(temp, 'extended-analysis');
+  runCli(['analyze', '--input', extensionInput, '--format', 'jsonl', '--page', '/items', '--runtime', 'browser', '--profile', expandedFile, '--out', extendedAnalysis]);
+  const extended = JSON.parse(await readFile(join(extendedAnalysis, 'analysis.json'), 'utf8'));
+  assert.equal(extended.candidates.length, 2);
+  assert.ok(extended.candidates.every(candidate => candidate.state === 'draft'));
+  assert.equal(extended.candidates.find(candidate => candidate.ruleId === profile.scenarios[0].id).id, refined.candidates[0].id);
+  assert.ok(JSON.parse(await readFile(join(extendedAnalysis, 'cases/error-to-test.json'), 'utf8')).cases.every(test => test.questions.some(question => question.includes('Review this draft'))));
+  assert.equal(await readFile(profileFile, 'utf8'), JSON.stringify(profile));
+  assert.match(runCli(['verify', extendedAnalysis, '--input', extensionInput, '--profile', expandedFile]), /original input: checked/);
   const noRuns = JSON.parse(runCli(['results', reviewed, '--format', 'json']));
   assert.equal(noRuns.runCount, 0);
   assert.equal(noRuns.counts['not-run'], 1);
@@ -173,5 +207,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile/results/comparison/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile extension/results/comparison/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

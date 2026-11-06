@@ -137,6 +137,23 @@ error-to-test analyze --input errors.json --min-count 3 --profile ./review-profi
 
 `init-profile`은 검증에 통과한 번들만 읽고 새 파일에 저장합니다. 수정된 번들, 선택된 TC가 없는 결과, 기존 출력 파일은 거부합니다. 원래 분석 산출물을 덮어쓰지 않습니다. API의 `createProfileTemplate(analysis)`도 편집용 `error-to-test/profile-1` 객체를 만들며, 완성된 실행 프로필을 의미하지 않습니다.
 
+이미 작성한 프로필은 `--profile`로 이어서 보완할 수 있습니다.
+
+```sh
+error-to-test analyze --input current-errors.jsonl --format jsonl --out ./current-analysis
+error-to-test init-profile ./current-analysis --profile ./existing-profile.json --out ./expanded-profile.json
+# 새로 추가된 빈 요구사항·출처·준비 조건·동작·assertion 작성
+error-to-test analyze --input current-errors.jsonl --format jsonl --profile ./expanded-profile.json --out ./expanded-analysis
+```
+
+기존 프로필은 요구사항·기대 결과 출처 등 일반 프로필 검증을 통과해야 합니다. 이름과 규칙 순서·ID·조건·단계·기대 결과·준비 확인·질문을 검증된 값 그대로 보존합니다. 알 수 없는 필드와 파일 서식은 보존하지 않습니다. 기존 질문과 준비 미확인 상태도 남아 실행을 차단합니다.
+
+TC 생성과 동일하게 모든 조건을 함께 검사해 기존 규칙이 적용되는 선택 묶음을 찾습니다. 넓은 조건의 규칙은 원래 조건 안에서 여러 묶음에 적용될 수 있습니다. 다른 릴리스의 정확한 `match.groupId`는 그대로 두며, 새 묶음에 단계·기대 결과를 복사하지 않습니다. 기존 규칙이 없는 선택 묶음에만 순위대로 빈 검토 항목을 붙입니다. 새 항목의 ID가 충돌하면 숫자 접미사를 붙이고 기존 ID는 유지합니다. 모두 기존 규칙으로 다뤄지면 항목을 추가하지 않습니다.
+
+새 항목은 기대 결과·출처가 비어 있고, 준비 미확인과 검토 질문을 유지합니다. 직접 채운 뒤 원래 입력·메타데이터·필터·이전 분석 기준으로 다시 분석하세요. 기존 검토 조건도 적용합니다. 과거 규칙을 자동 삭제하지 않으므로 합산 100개 규칙·1 MiB 한도를 지켜야 합니다. 민감한 정보가 있는 기존 메타데이터·실행 단계는 파일 생성 전에 거부합니다. 기본·확장 템플릿 모두 번들의 `results` 폴더 밖에 있는 새 파일에 저장합니다.
+
+API는 `createProfileTemplate(analysis, { profile: existingProfile })`입니다. JSON 값만으로 구성한 객체 또는 BOM 하나를 지원하는 JSON 문자열을 1 MiB까지 받으며 입력 객체를 변경하지 않습니다. 객체의 선택 필드가 `undefined`이면 해당 속성을 생략하세요. `profile`을 생략하면 기존 빈 템플릿을 만듭니다.
+
 ```sh
 node bin/error-to-test.mjs verify .error-to-test/example --input examples/errors.json --profile examples/profile.json
 node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --reviewed --out .error-to-test/reviewed
