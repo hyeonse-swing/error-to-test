@@ -51,7 +51,7 @@ error-to-test analyze --input morning.json --input afternoon.json --min-count 3 
 error-to-test verify ./combined --input morning.json --input afternoon.json
 ```
 
-최대 50개 파일, 합산 10 MiB·원본 10,000건까지 받습니다. 중복도 한도에 포함합니다. SDK JSON 내보내기·배열끼리, 수동 JSON끼리, 텍스트끼리처럼 같은 입력 형식끼리 합칩니다. 텍스트는 파일 하나가 보고서 한 건이며, `--format`과 메타데이터·필터는 모든 파일에 적용합니다. 표준 입력(`--input -`)은 `analyze`에서 단독으로 사용하고, `verify`에는 원본 파일을 지정하세요.
+최대 50개 파일, 합산 10 MiB·원본 10,000건까지 받습니다. 중복도 한도에 포함합니다. SDK JSON 내보내기·배열끼리, 수동 JSON끼리, 텍스트끼리, 같은 종류의 JSONL끼리처럼 같은 입력 형식끼리 합칩니다. 텍스트는 파일 하나가 보고서 한 건이며, `--format`과 메타데이터·필터는 모든 파일에 적용합니다. 표준 입력(`--input -`)은 `analyze`에서 단독으로 사용하고, `verify`에는 원본 파일을 지정하세요.
 
 파일과 표준 입력은 올바른 UTF-8이어야 합니다. 잘못된 바이트가 같은 대체 문자로 변환되어 원본 변경을 놓치지 않도록 해시 계산 전에 잘못된 인코딩을 거부합니다.
 
@@ -60,6 +60,30 @@ error-to-test verify ./combined --input morning.json --input afternoon.json
 여러 파일의 원본 SHA-256과 UTF-8 바이트 수를 입력 순서대로 `analysis.source.inputs`와 보고서에 남깁니다. 파일명과 원문은 저장하지 않습니다. `source.sha256`은 `JSON.stringify({ schemaVersion: 'error-to-test/inputs-1', inputs })`의 SHA-256이며, 각 항목은 `{ sha256, byteLength }` 순서입니다. 이 목록도 분석 해시로 검증합니다. 원본 확인에는 BOM·공백까지 동일한 모든 파일을 같은 순서로 지정해야 합니다. 단일 입력의 기존 바이트 해시와 결과 형식은 유지합니다.
 
 API에서도 `analyzeErrors([firstContent, secondContent], options)`, `parseInput([firstContent, secondContent], options)`, `await analyzeWithBaseline([firstContent, secondContent], baselineDirectory, options)`으로 사용합니다. 원본 검증은 `await verifyBundle(directory, { input: [firstContent, secondContent] })`입니다. 원소 하나의 배열은 문자열 하나와 동일합니다. 프로필 보완·이전 분석 대비 선택에도 같은 입력 순서를 유지하고, 기존 맥락 질문과 검토 조건을 적용합니다.
+
+한 줄에 오류 한 건을 저장한 **JSONL 로그**는 `--format jsonl`로 분석합니다.
+
+```sh
+error-to-test analyze --input errors.jsonl --format jsonl --out ./jsonl-analysis
+error-to-test analyze --input morning.jsonl --input afternoon.jsonl --format jsonl --min-count 3 --out ./combined-jsonl
+cat errors.jsonl | error-to-test analyze --input - --format jsonl --out ./piped-jsonl
+error-to-test verify ./jsonl-analysis --input errors.jsonl
+```
+
+각 줄은 `schemaVersion: 1`인 완전한 SDK 이벤트 객체이거나, `schemaVersion` 없이 `message`를 필수로 가진 수동 오류 객체입니다. 한 파일과 함께 분석할 여러 파일에서 두 종류를 섞을 수 없습니다. 수동 오류는 다음처럼 작성합니다.
+
+```jsonl
+{"id":"first","message":"TypeError: item is undefined","page":"/items","runtime":"browser"}
+{"id":"second","message":"TypeError: item is undefined","page":"/items","runtime":"browser"}
+```
+
+[JSONL 예제](examples/manual.jsonl)는 `node bin/error-to-test.mjs analyze --input examples/manual.jsonl --format jsonl --min-count 2`로 실행합니다. 반복된 묶음 하나를 TC 대상으로 선택하고 전체 두 묶음을 남깁니다. 기대 결과나 실행할 assertion은 추측하지 않습니다.
+
+LF·CRLF, 빈 줄, 문자열 안의 이스케이프된 줄바꿈과 파일 맨 앞의 BOM 하나를 지원합니다. 각 유효 줄은 완전한 JSON 객체 하나여야 합니다. 배열·내보내기 래퍼(`events`/`errors`)·줄별 `partial` 정보·알 수 없는 스키마는 거부합니다. 잘못된 줄은 건너뛰지 않고 1부터 시작하는 입력 파일 번호·실제 줄 번호로 알리며, 오류 원문은 진단 메시지에 넣지 않습니다. JSONL 자동 감지는 하지 않으므로 `--format jsonl`을 지정하세요. 기존 `auto`·`json`·`text` 동작은 유지합니다.
+
+수집 범위는 `browser-error-jsonl`의 수집 이벤트 또는 `manual-jsonl`의 제출 보고서로 기록합니다. JSONL에는 내보내기의 부분 수집 정보가 없으므로 `partial: false`는 표시가 제공되지 않았다는 의미이며, 수집 완전성·보존 범위 미상 경고를 남깁니다. 완전한 수집을 뜻하지 않습니다. 기존 합산 한도·중복 제거·필터·원본 바이트 해시·프로필·검토 조건을 적용하고, 빈 줄은 건수에 넣지 않습니다.
+
+API는 `analyzeErrors(content, { format: 'jsonl' })`이며 여러 파일의 문자열 배열도 지원합니다. 같은 건수 기준의 JSON·JSONL 번들은 `compare`와 `--baseline`으로 연결하며 형식 차이 경고를 유지합니다. 수집 이벤트와 제출 보고서는 비교할 수 없습니다. 기존 0.1.x 번들은 계속 읽을 수 있고, JSONL 번들은 0.2.0 이상이 필요합니다.
 
 두 분석 결과는 `compare`로 비교할 수 있습니다. 릴리스가 바뀐 뒤 어떤 오류 서명이 다시 관측됐는지 확인할 때 사용합니다.
 

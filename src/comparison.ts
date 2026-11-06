@@ -19,7 +19,7 @@ export interface AnalysisComparison {
 const statuses: ComparisonStatus[] = ['only-current', 'both', 'only-baseline'];
 const runtimes: Runtime[] = ['browser', 'webview-ios', 'webview-android', 'unknown'];
 const types: EventType[] = ['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual'];
-const kinds: SourceCoverage['kind'][] = ['browser-error-json', 'manual-json', 'manual-text'];
+const kinds: SourceCoverage['kind'][] = ['browser-error-json', 'browser-error-jsonl', 'manual-json', 'manual-jsonl', 'manual-text'];
 const normalizedMax = 128 * 1024;
 const hex64 = /^[0-9a-f]{64}$/;
 const groupId = /^group-[0-9a-f]{16}$/;
@@ -36,7 +36,7 @@ function coverage(value: unknown, label: string): SourceCoverage {
   const raw = record(value, label);
   if (!kinds.includes(raw.kind as SourceCoverage['kind'])) throw new Error(`${label}.kind is unsupported.`);
   const kind = raw.kind as SourceCoverage['kind'];
-  const frequency = kind === 'browser-error-json' ? 'captured-events' : 'submitted-reports';
+  const frequency = kind === 'browser-error-json' || kind === 'browser-error-jsonl' ? 'captured-events' : 'submitted-reports';
   if (raw.frequency !== frequency) throw new Error(`${label}.frequency is incompatible with kind.`);
   if (typeof raw.partial !== 'boolean' || raw.retention !== 'unknown') throw new Error(`${label} has unsupported partial or retention data.`);
   const inputCount = integer(raw.inputCount, `${label}.inputCount`);

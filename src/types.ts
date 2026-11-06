@@ -36,7 +36,7 @@ export interface ErrorObservation {
 }
 
 export interface SourceCoverage {
-  kind: 'browser-error-json' | 'manual-json' | 'manual-text';
+  kind: 'browser-error-json' | 'manual-json' | 'manual-text' | 'browser-error-jsonl' | 'manual-jsonl';
   frequency: 'captured-events' | 'submitted-reports';
   partial: boolean;
   inputCount: number;

@@ -1,0 +1,3 @@
+{"id":"jsonl-1","project":"demo","environment":"test","release":"r1","runtime":"browser","type":"javascript","page":"/items","message":"TypeError: item is undefined","stack":"    at render (/app.js:10:2)"}
+{"id":"jsonl-2","project":"demo","environment":"test","release":"r1","runtime":"browser","type":"javascript","page":"/items","message":"TypeError: item is undefined","stack":"    at render (/app.js:10:2)"}
+{"id":"jsonl-3","project":"demo","environment":"test","release":"r1","runtime":"browser","type":"javascript","page":"/settings","message":"ReferenceError: settings is not defined","stack":"    at showSettings (/settings.js:4:1)"}

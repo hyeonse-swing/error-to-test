@@ -56,6 +56,9 @@ function analyze(content: string | readonly string[], options: AnalyzeOptions, b
     if (comparison.baseline.coverage.period) {
       warnings.push('Baseline date filtering applies only to reports with observed timestamps; undated reports may have been excluded.');
     }
+    if (comparison.baseline.coverage.kind === 'browser-error-jsonl' || comparison.baseline.coverage.kind === 'manual-jsonl') {
+      warnings.push('Baseline JSONL has no export coverage metadata; partial false means unmarked, and collection completeness and retention are unknown.');
+    }
   }
   const eligibleGroups = selectedGroups.filter(group => group.count >= minCount);
   if (eligibleGroups.length < selectedGroups.length) warnings.push(`TC selection requires at least ${minCount} supplied records per group; ${eligibleGroups.length} of ${selectedGroups.length} groups are eligible. All groups remain in analysis.json. These counts are supplied records, not global rates.`);

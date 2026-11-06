@@ -17,6 +17,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test analyze --input errors-1.json --input errors-2.json --profile profile.json --out new-directory
   error-to-test analyze --input errors.json --baseline previous-bundle --out new-directory
   error-to-test analyze --input error.txt --format text --page /items --out new-directory
+  error-to-test analyze --input errors.jsonl --format jsonl --out new-directory
   error-to-test analyze --error "TypeError: item is undefined" --page /items --out new-directory
   cat error.txt | error-to-test analyze --input - --format text --out new-directory
   error-to-test verify new-directory [--input errors-1.json --input errors-2.json] [--profile profile.json]
@@ -26,9 +27,9 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md]
 
 Options:
-  --input FILE           SDK export, manual JSON, or plain error text; repeat for same-format files in order (analyze: sole - for stdin)
+  --input FILE           SDK export, manual JSON, JSONL, or plain error text; repeat for same-format files in order (analyze: sole - for stdin)
   --error TEXT           Submit a single error directly; remaining lines are its stack
-  --format auto|json|text Analyze input format; auto rejects malformed JSON-looking input
+  --format auto|json|jsonl|text Analyze input format; JSONL requires explicit selection and one record per line; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
   --format text|json      Compare format (default: text Markdown)
   --profile FILE         Confirmed app scenarios and explicit assertions (optional)
@@ -229,12 +230,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
   const format = values.format ?? 'auto';
-  if (format !== 'auto' && format !== 'json' && format !== 'text') throw new Error('--format must be auto, json, or text.');
+  if (format !== 'auto' && format !== 'json' && format !== 'jsonl' && format !== 'text') throw new Error('--format must be auto, json, jsonl, or text.');
   const types = ['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual'];
   if (values.type !== undefined && !types.includes(values.type)) throw new Error('--type is not supported.');
   if (values.runtime !== undefined && !['browser', 'webview-ios', 'webview-android', 'unknown'].includes(values.runtime)) throw new Error('--runtime is not supported.');
   let content: string | readonly string[];
-  let inputFormat: 'auto' | 'json' | 'text' = format;
+  let inputFormat: AnalyzeOptions['format'] = format;
   if (values.error !== undefined) {
     if (values.format !== undefined) throw new Error('--format applies to --input; direct --error is a manual report.');
     const [message, ...stack] = values.error.trim().split(/\r?\n/);

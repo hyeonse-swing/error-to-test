@@ -4,7 +4,7 @@ import { redactText, safeUrl } from './redact.ts';
 import { inputSource } from './input-source.ts';
 
 export interface ParseInputOptions {
-  format?: 'auto' | 'json' | 'text';
+  format?: 'auto' | 'json' | 'text' | 'jsonl';
   project?: string;
   environment?: string;
   release?: string;
@@ -168,9 +168,49 @@ interface RawDocument {
   kind: ParsedInput['coverage']['kind'];
   partial: boolean;
   raw: unknown[];
+  lineNumbers?: number[];
 }
 
-function decodeDocument(content: string, format: NonNullable<ParseInputOptions['format']>): RawDocument {
+function jsonlError(fileIndex: number, lineNumber: number, reason: string): Error {
+  return new Error(`JSONL input file ${fileIndex}, line ${lineNumber}: ${reason}`);
+}
+
+function decodeJsonl(content: string, fileIndex: number, remainingRecords: number): RawDocument {
+  // A single file-leading BOM affects parsing only; inputSource hashes the original content.
+  const lines = content.replace(/^\uFEFF/, '').split('\n');
+  const raw: unknown[] = [];
+  const lineNumbers: number[] = [];
+  let kind: 'browser-error-jsonl' | 'manual-jsonl' | undefined;
+  for (const [index, line] of lines.entries()) {
+    if (/^[ \t\r]*$/.test(line)) continue;
+    const lineNumber = index + 1;
+    if (raw.length >= remainingRecords) throw new Error('Input exceeds 10000 records');
+    let item: unknown;
+    try { item = JSON.parse(line); } catch { throw jsonlError(fileIndex, lineNumber, 'Malformed JSON record.'); }
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw jsonlError(fileIndex, lineNumber, 'Record must be a JSON object.');
+    }
+    const value = item as Record<string, unknown>;
+    if (Object.hasOwn(value, 'events') || Object.hasOwn(value, 'errors') || Object.hasOwn(value, 'partial')) {
+      throw jsonlError(fileIndex, lineNumber, 'Export envelopes and coverage metadata are unsupported.');
+    }
+    const lineKind = Object.hasOwn(value, 'schemaVersion') ? 'browser-error-jsonl' : 'manual-jsonl';
+    if (lineKind === 'browser-error-jsonl' && value.schemaVersion !== 1) {
+      throw jsonlError(fileIndex, lineNumber, 'Unsupported schemaVersion.');
+    }
+    if (kind !== undefined && kind !== lineKind) {
+      throw jsonlError(fileIndex, lineNumber, 'Mixed browser and manual records are unsupported.');
+    }
+    kind = lineKind;
+    raw.push(item);
+    lineNumbers.push(lineNumber);
+  }
+  if (kind === undefined) throw new Error(`JSONL input file ${fileIndex}: Input has no records.`);
+  return { kind, partial: false, raw, lineNumbers };
+}
+
+function decodeDocument(content: string, format: NonNullable<ParseInputOptions['format']>, fileIndex: number, remainingRecords: number): RawDocument {
+  if (format === 'jsonl') return decodeJsonl(content, fileIndex, remainingRecords);
   const trimmed = content.trimStart();
   const isJson = format === 'json' || (format === 'auto' && /^[\[{]/.test(trimmed) && !LOGGER_PREFIX.test(trimmed));
   if (isJson) {
@@ -212,25 +252,37 @@ function decodeDocument(content: string, format: NonNullable<ParseInputOptions['
 export function parseInput(content: string | readonly string[], options: ParseInputOptions = {}): ParsedInput {
   const source = inputSource(content);
   const files = typeof content === 'string' ? [content] : content;
-  if (files.some(file => !file.trim())) throw new Error('Input is empty');
+  const format = options.format ?? 'auto';
+  if (format !== 'jsonl' && files.some(file => !file.trim())) throw new Error('Input is empty');
   const from = options.from === undefined ? undefined : timestamp(options.from, 'from');
   const to = options.to === undefined ? undefined : timestamp(options.to, 'to');
   if (from && to && from > to) throw new Error('from must not exceed to');
-  const format = options.format ?? 'auto';
-  if (!['auto', 'json', 'text'].includes(format)) throw new Error('Invalid input format');
+  if (!['auto', 'json', 'text', 'jsonl'].includes(format)) throw new Error('Invalid input format');
   let kind: ParsedInput['coverage']['kind'] | undefined;
   let partial = false;
   const raw: unknown[] = [];
-  for (const file of files) {
-    const document = decodeDocument(file, format);
-    if (kind !== undefined && document.kind !== kind) throw new Error('Input files must have the same source kind.');
+  const jsonlLocations: { fileIndex: number; lineNumber: number }[] = [];
+  for (const [fileIndex, file] of files.entries()) {
+    const document = decodeDocument(file, format, fileIndex + 1, MAX_RECORDS - raw.length);
+    if (kind !== undefined && document.kind !== kind) {
+      if (format === 'jsonl') throw jsonlError(fileIndex + 1, document.lineNumbers![0]!, 'Input files must have the same source kind.');
+      throw new Error('Input files must have the same source kind.');
+    }
     kind = document.kind;
     partial ||= document.partial;
     if (raw.length + document.raw.length > MAX_RECORDS) throw new Error('Input exceeds 10000 records');
     raw.push(...document.raw);
+    if (document.lineNumbers) jsonlLocations.push(...document.lineNumbers.map(lineNumber => ({ fileIndex: fileIndex + 1, lineNumber })));
   }
-  const observations = raw.map((item, index) => kind === 'browser-error-json'
-    ? browserEvent(item, index) : manualError(item, index, options));
+  const browser = kind === 'browser-error-json' || kind === 'browser-error-jsonl';
+  const observations = raw.map((item, index) => {
+    if (format !== 'jsonl') return browser ? browserEvent(item, index) : manualError(item, index, options);
+    try { return browser ? browserEvent(item, index) : manualError(item, index, options); }
+    catch {
+      const location = jsonlLocations[index]!;
+      throw jsonlError(location.fileIndex, location.lineNumber, browser ? 'Invalid browser record.' : 'Invalid manual record.');
+    }
+  });
   const inputCount = raw.length;
   const seen = new Map<string, string>();
   const unique: ErrorObservation[] = [];
@@ -241,12 +293,19 @@ export function parseInput(content: string | readonly string[], options: ParseIn
     const source = canonical(raw[index]);
     const previous = seen.get(key);
     if (previous !== undefined) {
-      if (previous !== source) throw new Error(`Conflicting duplicate ID: ${item.id}`);
+      if (previous !== source) {
+        if (format === 'jsonl') {
+          const location = jsonlLocations[index]!;
+          throw jsonlError(location.fileIndex, location.lineNumber, 'Conflicting duplicate ID.');
+        }
+        throw new Error(`Conflicting duplicate ID: ${item.id}`);
+      }
       duplicates++;
     } else { seen.set(key, source); unique.push(item); }
   }
   const warnings: string[] = [];
   if (source.inputs) warnings.push(`Combined ${source.inputs.length} input files in supplied order; counts describe the supplied records across files, not global rates.`);
+  if (format === 'jsonl') warnings.push('JSONL has no export coverage metadata; collection completeness and retention are unknown.');
   if (partial) warnings.push('Source export is partial; observed counts may be incomplete.');
   if (duplicates) warnings.push(`${duplicates} duplicate record(s) removed.`);
   if (from || to) warnings.push('Date filtering applies only to reports with observed timestamps.');
@@ -266,7 +325,7 @@ export function parseInput(content: string | readonly string[], options: ParseIn
   if ((from || to) && unique.some((item) => !item.occurredAt)) warnings.push('Undated manual reports were excluded by date filters.');
   return {
     observations: selected,
-    coverage: { kind: kind!, frequency: kind === 'browser-error-json' ? 'captured-events' : 'submitted-reports',
+    coverage: { kind: kind!, frequency: browser ? 'captured-events' : 'submitted-reports',
       partial, inputCount, duplicates, filtered, retention: 'unknown',
       ...(from || to ? { period: { ...(from ? { from } : {}), ...(to ? { to } : {}) } } : {}) },
     sha256: source.sha256, ...(source.inputs ? { inputs: source.inputs } : {}), warnings,

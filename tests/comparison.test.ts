@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyzeErrors } from '../src/analysis.ts';
+import { analyzeErrors, analyzeWithBaseline } from '../src/analysis.ts';
 import { jsonText, writeBundle } from '../src/artifacts.ts';
 import { compareBundles, renderComparison } from '../src/comparison.ts';
 import { hash } from '../src/validation.ts';
@@ -16,6 +16,56 @@ async function fixture(run: (base: string, current: string) => Promise<void>, ba
   try { await writeBundle(base, baseline); await writeBundle(current, now); await run(base, current); }
   finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('manual JSONL compares with JSON and selects only-current TCs from a JSON baseline', async () => {
+  const before = analyzeErrors(manual(item('before', 'Shared')));
+  const content = [item('current', 'Shared', 'r2'), item('new', 'New', 'r2')].map(value => JSON.stringify(value)).join('\n');
+  const after = analyzeErrors(content, { format: 'jsonl' });
+  await fixture(async (base, current) => {
+    const comparison = await compareBundles(base, current);
+    assert.deepEqual(comparison.counts, { 'only-current': 1, both: 1, 'only-baseline': 0 });
+    assert.equal(comparison.current.coverage.kind, 'manual-jsonl');
+    assert.equal(comparison.current.coverage.frequency, 'submitted-reports');
+    assert.match(comparison.warnings.join('\n'), /Source kinds differ/);
+    assert.match(renderComparison(comparison), /manual-jsonl \/ submitted-reports/);
+    const selected = await analyzeWithBaseline(content, base, { format: 'jsonl' });
+    assert.equal(selected.groups.length, 2);
+    assert.equal(selected.candidates.length, 1);
+    assert.equal(selected.candidates[0]?.groupId, after.groups.find(group => group.message === 'New')?.id);
+    assert.equal(selected.selection?.excludedGroupCount, 1);
+  }, before, after);
+  await fixture(async (base) => {
+    const selected = await analyzeWithBaseline(manual(item('before', 'Shared')), base, { format: 'json' });
+    assert.equal(selected.selection?.baseline.coverage.kind, 'manual-jsonl');
+    assert.equal(selected.selection?.baseline.coverage.partial, false);
+    assert.match(selected.warnings.join('\n'), /Baseline JSONL has no export coverage metadata; partial false means unmarked/);
+  }, after, before);
+});
+
+test('browser JSONL retains captured-event frequency across formats and refuses manual comparisons', async () => {
+  const event = { schemaVersion: 1, eventId: 'event-1', project: 'demo', environment: 'test', release: 'r1',
+    sdkVersion: '1', occurredAt: '2026-11-06T00:00:00Z', viewId: 'view-1', sequence: 1, elapsedMs: 1,
+    type: 'javascript', message: 'Failure', page: '/items', runtime: 'browser' };
+  const before = analyzeErrors(JSON.stringify({ schemaVersion: 1, partial: true, events: [event] }));
+  const content = JSON.stringify({ ...event, eventId: 'event-2', release: 'r2' });
+  const after = analyzeErrors(content, { format: 'jsonl' });
+  await fixture(async (base, current) => {
+    const comparison = await compareBundles(base, current);
+    assert.equal(comparison.counts.both, 1);
+    assert.equal(comparison.issues[0]?.delta, 0);
+    assert.equal(comparison.current.coverage.frequency, 'captured-events');
+    assert.match(renderComparison(comparison), /browser-error-jsonl \/ captured-events/);
+    assert.match(comparison.warnings.join('\n'), /partial/);
+    assert.equal((await analyzeWithBaseline(content, base, { format: 'jsonl' })).candidates.length, 0);
+    const reverse = await analyzeWithBaseline(JSON.stringify({ schemaVersion: 1, events: [event] }), current, { format: 'json' });
+    assert.equal(reverse.selection?.baseline.coverage.kind, 'browser-error-jsonl');
+    assert.match(reverse.warnings.join('\n'), /Baseline JSONL has no export coverage metadata; partial false means unmarked/);
+  }, before, after);
+  await fixture(async (base, current) => {
+    await assert.rejects(compareBundles(base, current), /matching count frequency/);
+    await assert.rejects(analyzeWithBaseline(content, base, { format: 'jsonl' }), /matching count frequency/);
+  }, analyzeErrors(JSON.stringify(item('manual', 'Failure')), { format: 'jsonl' }), after);
+});
 
 test('compares all groups across releases, buckets, and selected TC thresholds deterministically', async () => {
   const before = analyzeErrors(manual(item('a1', 'Shared'), item('a2', 'Shared'), item('a3', 'Gone')), { minCount: 3 });

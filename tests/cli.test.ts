@@ -136,6 +136,97 @@ test('repeated manual JSON inputs combine before selection and verify their orde
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('explicit manual JSONL combines BOM and CRLF files with ordered source fingerprints', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-jsonl-cli-'));
+  try {
+    const first = join(temp, 'first.jsonl');
+    const second = join(temp, 'second.jsonl');
+    const shared = { id: 'shared', message: 'Error: repeated', page: '/same' };
+    const firstText = `\uFEFF${JSON.stringify(shared)}\r\n\r\n${JSON.stringify({ id: 'other', message: 'Error: other', page: '/other' })}\r\n`;
+    const secondText = `${JSON.stringify(shared)}\n${JSON.stringify({ id: 'third', message: 'Error: repeated', page: '/same' })}\n`;
+    await writeFile(first, firstText);
+    await writeFile(second, secondText);
+    const out = join(temp, 'bundle');
+    const analyzed = run(['analyze', '--input', first, '--input', second, '--format', 'jsonl', '--min-count', '2', '--top', '1', '--out', out]);
+    assert.equal(analyzed.status, 0, analyzed.stderr);
+    const analysis = JSON.parse(await readFile(join(out, 'analysis.json'), 'utf8'));
+    assert.equal(analysis.coverage.kind, 'manual-jsonl');
+    assert.equal(analysis.coverage.frequency, 'submitted-reports');
+    assert.equal(analysis.coverage.inputCount, 4);
+    assert.equal(analysis.coverage.duplicates, 1);
+    assert.equal(analysis.groups.length, 2);
+    assert.equal(analysis.groups[0].count, 2);
+    assert.equal(analysis.candidates.length, 1);
+    assert.equal(analysis.candidates[0].groupId, analysis.groups[0].id);
+    const inputs = [firstText, secondText].map(content => ({
+      sha256: createHash('sha256').update(content).digest('hex'), byteLength: Buffer.byteLength(content),
+    }));
+    assert.deepEqual(analysis.source.inputs, inputs);
+    assert.equal(analysis.source.sha256, createHash('sha256').update(JSON.stringify({ schemaVersion: 'error-to-test/inputs-1', inputs })).digest('hex'));
+    const verified = run(['verify', out, '--input', first, '--input', second]);
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.match(verified.stdout, /original input: checked/);
+    const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    assert.equal(typeof provenance.analysisSha256, 'string');
+    assert.equal(run(['verify', out, '--input', second, '--input', first]).status, 1);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('explicit SDK JSONL from stdin matches file analysis and auto does not detect JSONL', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-jsonl-stdin-'));
+  try {
+    const example = JSON.parse(await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8'));
+    const content = `${JSON.stringify(example.events[0])}\n${JSON.stringify({ ...example.events[0], eventId: 'second', viewId: 'second' })}\n`;
+    const file = join(temp, 'events.jsonl');
+    await writeFile(file, content);
+    const fileOut = join(temp, 'file');
+    const stdinOut = join(temp, 'stdin');
+    assert.equal(run(['analyze', '--input', file, '--format', 'jsonl', '--out', fileOut]).status, 0);
+    assert.equal(run(['analyze', '--input', '-', '--format', 'jsonl', '--out', stdinOut], content).status, 0);
+    const fileAnalysis = JSON.parse(await readFile(join(fileOut, 'analysis.json'), 'utf8'));
+    const stdinAnalysis = JSON.parse(await readFile(join(stdinOut, 'analysis.json'), 'utf8'));
+    assert.deepEqual(stdinAnalysis, fileAnalysis);
+    assert.equal(fileAnalysis.coverage.kind, 'browser-error-jsonl');
+    assert.equal(fileAnalysis.coverage.frequency, 'captured-events');
+    assert.equal(fileAnalysis.source.sha256, createHash('sha256').update(content).digest('hex'));
+    assert.equal(run(['verify', fileOut, '--input', file]).status, 0);
+    const autoOut = join(temp, 'auto');
+    const auto = run(['analyze', '--input', file, '--out', autoOut]);
+    assert.equal(auto.status, 1, auto.stderr);
+    await assert.rejects(stat(autoOut), { code: 'ENOENT' });
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('JSONL line errors and unsupported format contexts create no output or leak source text', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-jsonl-invalid-'));
+  try {
+    const marker = 'private-marker-9341';
+    const file = join(temp, 'bad.jsonl');
+    for (const [name, content, line] of [
+      ['malformed', `{"message":"okay"}\n{${marker}\n`, 2],
+      ['invalid-record', `\n{"message":"okay"}\n{"message":42,"secret":"${marker}"}\n`, 3],
+    ] as const) {
+      await writeFile(file, content);
+      const out = join(temp, name);
+      const result = run(['analyze', '--input', file, '--format', 'jsonl', '--out', out]);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, new RegExp(`(?:file|input)\\s*1.*line\\s*${line}|line\\s*${line}.*(?:file|input)\\s*1`, 'i'));
+      assert.equal(result.stderr.includes(marker), false);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+    const direct = run(['analyze', '--error', 'Error: direct', '--format', 'jsonl', '--out', join(temp, 'direct')]);
+    assert.equal(direct.status, 1);
+    assert.match(direct.stderr, /--format applies to --input/);
+    for (const command of ['results', 'compare']) {
+      const args = command === 'results' ? ['results', temp] : ['compare', temp, temp];
+      const result = run([...args, '--format', 'jsonl']);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /--format must be text or json/);
+    }
+    assert.match(run(['--help']).stdout, /JSONL requires explicit selection/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('repeated input rejects invalid source sets before creating output', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-multi-invalid-'));
   try {

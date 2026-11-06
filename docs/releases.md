@@ -2,6 +2,12 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.2.0
+
+JSONL inputs add explicit `--format jsonl`, line-numbered validation, and browser/manual record kinds while preserving original bytes, multi-file provenance, comparison/baseline selection, and review gates. Existing 0.1.x bundles and formats remain supported. Integrations with exhaustive `SourceCoverage.kind` handling should include `browser-error-jsonl` and `manual-jsonl`.
+
+This minor release sets both package manifests to `0.2.0` before verification. The workflow publishes that exact source commit without creating an additional patch bump.
+
 ## Automatic publication
 
 Pull requests and main pushes verify the package on Ubuntu and macOS. A verified main push then prepares an immutable release source:

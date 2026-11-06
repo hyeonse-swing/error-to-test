@@ -76,7 +76,7 @@ error-to-test analyze --input morning.json --input afternoon.json --min-count 3 
 error-to-test verify ./combined --input morning.json --input afternoon.json
 ```
 
-Supply up to 50 files with a combined limit of 10 MiB and 10,000 raw records, including duplicates. Files must have the same input kind: SDK JSON exports/arrays together, manual JSON files together, or text reports together. Each text file is one report. `--format` and metadata/filter options apply to every file. Standard input (`--input -`) must be the only input to `analyze`; `verify` requires original files.
+Supply up to 50 files with a combined limit of 10 MiB and 10,000 raw records, including duplicates. Files must have the same input kind: SDK JSON exports/arrays together, manual JSON files together, text reports together, or JSONL files of the same record kind together. Each text file is one report. `--format` and metadata/filter options apply to every file. Standard input (`--input -`) must be the only input to `analyze`; `verify` requires original files.
 
 Files and standard input must be valid UTF-8. Malformed encoding is rejected before hashing, so distinct invalid bytes cannot silently become the same replacement character.
 
@@ -85,6 +85,32 @@ Duplicate project/record IDs are resolved across all files before filtering. Ide
 For multiple files, `analysis.source.inputs` records each original SHA-256 and UTF-8 byte length in the supplied order. Filenames and raw contents are not stored. `source.sha256` is the SHA-256 of `JSON.stringify({ schemaVersion: 'error-to-test/inputs-1', inputs })`, with each descriptor ordered as `{ sha256, byteLength }`. The analysis hash protects the manifest, and the report lists it. Verification requires every original file in the same order, including its BOM and whitespace. A single input retains its original byte hash and existing output contract.
 
 The API accepts ordered content arrays: `analyzeErrors([firstContent, secondContent], options)`, `parseInput([firstContent, secondContent], options)`, and `await analyzeWithBaseline([firstContent, secondContent], baselineDirectory, options)`. Verify with `await verifyBundle(directory, { input: [firstContent, secondContent] })`. A one-element array is equivalent to its single string. Profile refinement and baseline selection work with the same ordered inputs and existing review gates.
+
+### Read JSONL logs
+
+Use explicit `--format jsonl` for one error object per line:
+
+```sh
+error-to-test analyze --input errors.jsonl --format jsonl --out ./jsonl-analysis
+error-to-test analyze --input morning.jsonl --input afternoon.jsonl --format jsonl --min-count 3 --out ./combined-jsonl
+cat errors.jsonl | error-to-test analyze --input - --format jsonl --out ./piped-jsonl
+error-to-test verify ./jsonl-analysis --input errors.jsonl
+```
+
+Each record is either a full Browser Error Log v1 event with `schemaVersion: 1`, or a plain manual error object with a required `message` and no `schemaVersion`. For manual reports:
+
+```jsonl
+{"id":"first","message":"TypeError: item is undefined","page":"/items","runtime":"browser"}
+{"id":"second","message":"TypeError: item is undefined","page":"/items","runtime":"browser"}
+```
+
+See [examples/manual.jsonl](examples/manual.jsonl) for a complete sample: `node bin/error-to-test.mjs analyze --input examples/manual.jsonl --format jsonl --min-count 2` selects one recurring group and retains both groups for review. No expectation or runnable assertion is invented.
+
+LF and CRLF, blank lines, escaped newlines in strings, and one leading file BOM are supported. Each nonblank physical line must contain one complete JSON object. Arrays, export envelopes (`events`/`errors`), record-level `partial` metadata, unknown schema versions, and mixed browser/manual records are rejected. Syntax and record errors identify the 1-based input file and physical line without echoing the record. `auto`, `json`, and `text` retain their existing behavior; JSONL is never auto-detected.
+
+Coverage records `browser-error-jsonl` / `captured-events` or `manual-jsonl` / `submitted-reports`. JSONL carries no export coverage metadata: `partial: false` means no partial flag was supplied, and a warning keeps collection completeness and retention unknown. JSONL does not establish complete collection. The same combined byte/file/record limits, raw-record deduplication, filters, original-byte hashes, review gates, and profile rules apply. Empty lines are not records; malformed lines are never silently skipped.
+
+Use `analyzeErrors(content, { format: 'jsonl' })` or ordered content arrays in the API. Comparison and `--baseline` can read JSON and JSONL bundles of matching count frequency, preserving the kind-difference warning. Captured events and submitted reports still cannot be compared. Existing 0.1.x bundles remain readable; JSONL bundles require 0.2.0 or newer.
 
 ### Compare two analyses
 

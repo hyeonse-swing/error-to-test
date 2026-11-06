@@ -137,6 +137,28 @@ try {
   assert.throws(() => runCli(['verify', combined, '--input', comparisonSources[0], '--input', comparisonSources[1]]));
   await writeFile(join(temp, 'multi-input-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {analyzeErrors,analyzeWithBaseline,verifyBundle,parseInput} from '@ihyeon/error-to-test';\nconst [bundle,...paths]=process.argv.slice(2);\nconst contents=await Promise.all(paths.map(path=>readFile(path,'utf8')));\nconst analysis=analyzeErrors(contents,{minCount:3,top:1});\nassert.deepEqual(analysis,JSON.parse(await readFile(bundle+'/analysis.json','utf8')));\nassert.equal(parseInput(contents).coverage.duplicates,3);\nassert.equal((await verifyBundle(bundle,{input:contents})).sourceChecked,true);\nassert.equal((await analyzeWithBaseline(contents,bundle)).candidates.length,0);\nassert.deepEqual(analyzeErrors([contents[0]]),analyzeErrors(contents[0]));\n`);
   execFileSync(process.execPath, ['multi-input-consumer.mjs', combined, ...combinedInputs], { cwd: temp, stdio: 'pipe' });
+  const jsonlInput = join(temp, 'current-errors.jsonl');
+  const jsonlBundle = join(temp, 'jsonl-focused');
+  const jsonlErrors = JSON.parse(await readFile(comparisonSources[1], 'utf8')).errors;
+  await writeFile(jsonlInput, '\uFEFF\r\n' + jsonlErrors.map(error => JSON.stringify(error)).join('\r\n') + '\r\n');
+  runCli(['analyze', '--input', jsonlInput, '--format', 'jsonl', '--baseline', comparisonBundles[0], '--top', '1', '--out', jsonlBundle]);
+  const jsonlAnalysis = JSON.parse(await readFile(join(jsonlBundle, 'analysis.json'), 'utf8'));
+  assert.equal(jsonlAnalysis.coverage.kind, 'manual-jsonl');
+  assert.equal(jsonlAnalysis.coverage.frequency, 'submitted-reports');
+  assert.equal(jsonlAnalysis.coverage.inputCount, 4);
+  assert.equal(jsonlAnalysis.selection.excludedGroupCount, 1);
+  assert.equal(jsonlAnalysis.candidates.length, 1);
+  assert.equal(jsonlAnalysis.candidates[0].groupId, focusedAnalysis.candidates[0].groupId);
+  assert.match(runCli(['verify', jsonlBundle, '--input', jsonlInput]), /original input: checked/);
+  assert.deepEqual(JSON.parse(runCli(['compare', comparisonBundles[0], jsonlBundle, '--format', 'json'])).counts, comparison.counts);
+  await writeFile(join(temp, 'jsonl-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {analyzeWithBaseline} from '@ihyeon/error-to-test';\nconst analysis=await analyzeWithBaseline(await readFile(process.argv[2],'utf8'),process.argv[3],{format:'jsonl',top:1});\nassert.deepEqual(analysis,JSON.parse(await readFile(process.argv[4],'utf8')));\n`);
+  execFileSync(process.execPath, ['jsonl-consumer.mjs', jsonlInput, comparisonBundles[0], join(jsonlBundle, 'analysis.json')], { cwd: temp, stdio: 'pipe' });
+  const jsonlExample = join(temp, 'jsonl-example');
+  runCli(['analyze', '--input', join(installedRoot, 'examples/manual.jsonl'), '--format', 'jsonl', '--min-count', '2', '--out', jsonlExample]);
+  const exampleAnalysis = JSON.parse(await readFile(join(jsonlExample, 'analysis.json'), 'utf8'));
+  assert.equal(exampleAnalysis.groups.length, 2);
+  assert.equal(exampleAnalysis.candidates.length, 1);
+  assert.equal(exampleAnalysis.candidates[0].state, 'needs-context');
   for (let index = 0; index < comparisonBundles.length; index++) {
     assert.match(runCli(['verify', comparisonBundles[index], '--input', comparisonSources[index]]), /original input: checked/);
   }
@@ -151,5 +173,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile/results/comparison/baseline/multi-input workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile/results/comparison/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }
