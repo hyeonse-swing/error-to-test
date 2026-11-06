@@ -61,6 +61,22 @@ TC 생성 대상에서 제외된 묶음도 모두 비교합니다. 한쪽에 여
 
 양쪽 번들을 검증한 뒤 읽으며 원래 산출물·TC 상태·검토 조건·연결 결과는 수정하지 않습니다. 기본 출력은 Markdown이고, `--format json`은 `error-to-test/comparison-1`을 반환합니다. `--out`은 양쪽 번들의 `results` 폴더 밖에 있는 새 파일만 허용합니다. API는 `compareBundles()`와 `renderComparison()`입니다.
 
+`analyze --baseline`을 쓰면 **이전 분석에서 관측되지 않은 서명만 골라 TC를 생성**할 수 있습니다.
+
+```sh
+error-to-test analyze --input before-errors.json --out ./before
+error-to-test analyze --input current-errors.json --baseline ./before --min-count 3 --top 10 --out ./new-signature-tcs
+error-to-test init-profile ./new-signature-tcs --out ./new-signature-profile.json
+# 확인한 요구사항·준비 조건·동작·assertion으로 프로필 수정
+error-to-test analyze --input current-errors.json --baseline ./before --min-count 3 --top 10 --profile ./new-signature-profile.json --out ./reviewed-new-signatures
+```
+
+`compare`와 같은 기준으로 릴리스만 제외한 전체 서명을 비교합니다. 이전 분석에서 TC 생성 대상이 아니었던 묶음도 비교에 포함합니다. 이전에 없던 현재 묶음을 먼저 고른 뒤 `--min-count`, `--top`을 적용하므로 순위가 높은 기존 오류 때문에 새 서명의 TC가 밀려나지 않습니다. 최소 건수는 현재의 각 묶음별로 적용하며 서로 다른 릴리스의 건수를 합치지 않습니다. 현재의 전체 묶음·원본 해시·수집 범위는 그대로 남습니다. 선택할 후보가 없으면 suite 없이 정상 번들을 만듭니다.
+
+`analysis.json`의 `selection`과 보고서에 선택 방식(`only-current`), 이전 입력·검증된 분석 파일의 SHA-256, 이전 수집 범위, 선택·제외 묶음 수를 기록합니다. 이 정보도 새 번들의 분석 해시로 검증됩니다. 이전 번들은 한 번 검증해 읽으며 수정하지 않습니다. 이후 이전 번들이 바뀌어도 저장된 선택 결과는 바뀌지 않습니다. 프로필을 보완할 때 같은 이전 번들과 필터를 유지하세요. 맥락 질문과 검토 조건도 계속 적용하며, `--reviewed`는 검토 확인만 처리합니다.
+
+이전에 없었다는 표시가 새로 유입된 버그나 회귀를 확정하지는 않습니다. 부분 내보내기·기간·수집 범위 차이 등 비교 경고를 유지하고, 수집 이벤트와 수동 제출 보고서를 섞으면 거부합니다. 출력은 이전 번들의 `results` 폴더 밖에 있는 새 디렉터리만 허용합니다. API는 `await analyzeWithBaseline(content, baselineDirectory, { minCount: 3, top: 10, profile })`이며 이전 번들 검증도 수행합니다.
+
 `report.md` 상단에서 TC 초안 수와 추가 정보가 필요한 TC 수를 확인할 수 있습니다. 초안도 실행 전에 검토해야 합니다. 오류 묶음·수집 건수와 함께 대표 로그의 오류·React 컴포넌트 스택, 재현 방법·사전 조건·테스트 단계·부족한 정보도 표시합니다. 같은 스택은 한 번만 표시하며, 전체 로그의 모든 스택을 나열하지는 않습니다. 재현 단계와 정상 기대 결과, 명시적인 assertion이 없으면 질문이 있는 TC를 생성합니다. 직접 입력한 보고서에는 실제 발생 시각·사용자 수를 만들어 넣지 않습니다. 수집 건수도 실제 발생률을 뜻하지 않으며, 원본 내보내기의 일부 데이터 표시를 유지합니다.
 
 기본 suite는 검토 질문으로 실행이 차단됩니다. TC와 프로필을 확인한 뒤 다른 출력 폴더에 `--reviewed`로 다시 생성하면 검토 질문만 제거됩니다. 나머지 질문은 그대로 실행을 차단합니다. 프로필의 `setupConfirmed`는 준비 조건을 확인했다는 표시이며, 계정·데이터를 자동으로 준비하는 기능은 아닙니다.

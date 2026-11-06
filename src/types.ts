@@ -115,6 +115,12 @@ export interface Analysis {
   groups: IssueGroup[];
   candidates: TestCandidate[];
   warnings: string[];
+  selection?: {
+    mode: 'only-current';
+    baseline: { inputSha256: string; analysisSha256: string; coverage: SourceCoverage };
+    onlyCurrentGroupCount: number;
+    excludedGroupCount: number;
+  };
 }
 export interface FlowQaSuite {
   schemaVersion: 'flow-qa/suite-1';

@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { analyzeErrors } from './analysis.ts';
+import { analyzeErrors, analyzeWithBaseline, type AnalyzeOptions } from './analysis.ts';
 import { jsonText, readBoundedFile, readVerifiedBundle, verifyBundle, writeBundle } from './artifacts.ts';
 import { compareBundles, renderComparison } from './comparison.ts';
 import { createProfileTemplate } from './profile-template.ts';
@@ -14,6 +14,7 @@ import type { Analysis, EventType, Runtime } from './types.ts';
 const help = `Error to Test — local error analysis and regression TC drafts
 
   error-to-test analyze --input errors.json --profile profile.json --out new-directory
+  error-to-test analyze --input errors.json --baseline previous-bundle --out new-directory
   error-to-test analyze --input error.txt --format text --page /items --out new-directory
   error-to-test analyze --error "TypeError: item is undefined" --page /items --out new-directory
   cat error.txt | error-to-test analyze --input - --format text --out new-directory
@@ -30,6 +31,7 @@ Options:
   --format text|json      Results summary format (default: text Markdown)
   --format text|json      Compare format (default: text Markdown)
   --profile FILE         Confirmed app scenarios and explicit assertions (optional)
+  --baseline DIRECTORY   Select only signatures absent from this verified bundle, before --min-count and --top; retain all groups in analysis.json (analyze only)
   --project NAME         Metadata for a manual report
   --environment NAME    Metadata for a manual report
   --release NAME         Metadata for a manual report
@@ -90,7 +92,7 @@ function insideBundleResults(bundleRoot: string, path: string): boolean {
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string' }, error: { type: 'string' }, report: { type: 'string' },
-    format: { type: 'string' }, profile: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
+    format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
     top: { type: 'string' }, 'min-count': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
@@ -204,6 +206,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, results, or compare. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
+  if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
   const format = values.format ?? 'auto';
   if (format !== 'auto' && format !== 'json' && format !== 'text') throw new Error('--format must be auto, json, or text.');
@@ -228,16 +231,22 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     if (values.reproduce || values.precondition || values.expected || values['expected-source']) throw new Error('Reported context options require --error. Use manual JSON or a profile for file input.');
     content = values.input === '-' ? await stdinText() : await readBoundedFile(resolve(values.input!));
   }
-  const analysis = analyzeErrors(content, {
+  const options: AnalyzeOptions = {
     format: inputFormat, ...(values.profile ? { profile: await readBoundedFile(resolve(values.profile), 1024 * 1024) } : {}),
     project: values.project, environment: values.environment, release: values.release, page: values.page, type: values.type as EventType | undefined, runtime: values.runtime as Runtime | undefined,
     from: values.from, to: values.to, ...(values.top !== undefined ? { top: Number(values.top) } : {}),
     ...(values['min-count'] !== undefined ? { minCount: Number(values['min-count']) } : {}),
-  });
+  };
+  const baseline = values.baseline === undefined ? undefined : resolve(values.baseline);
+  const analysis = baseline === undefined ? analyzeErrors(content, options) : await analyzeWithBaseline(content, baseline, options);
   const out = resolve(values.out ?? `.error-to-test/run-${Date.now()}-${randomUUID().slice(0, 8)}`);
+  if (baseline !== undefined && insideBundleResults(await realpath(baseline), await canonicalOutput(out))) {
+    throw new Error('The analysis cannot be written inside the baseline bundle results directory. Choose an outside --out DIRECTORY path.');
+  }
   const files = await writeBundle(out, analysis, { reviewed: values.reviewed });
   const drafts = analysis.candidates.filter(candidate => candidate.state === 'draft').length;
   process.stdout.write(`${analysis.groups.length} error groups; ${analysis.candidates.length} TC candidates (${drafts} drafts, ${analysis.candidates.length - drafts} need context).\n`);
+  if (analysis.selection) process.stdout.write(`${analysis.selection.onlyCurrentGroupCount} only-current groups; ${analysis.selection.excludedGroupCount} baseline-matched groups excluded from TC selection.\n`);
   process.stdout.write(`Review ${resolve(out, 'report.md')}\n${files.length} artifacts written. Review acknowledgment: ${values.reviewed ? 'yes' : 'pending'}.\n`);
 }
 export function reportCliError(error: unknown): void {

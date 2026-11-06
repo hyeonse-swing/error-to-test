@@ -104,6 +104,25 @@ try {
   assert.equal(comparison.issues.find(issue => issue.status === 'both').delta, 1);
   await writeFile(join(temp, 'comparison-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {compareBundles,renderComparison} from '@ihyeon/error-to-test';\nconst comparison=await compareBundles(process.argv[2],process.argv[3]);\nassert.equal(comparison.counts.both,1);\nassert.equal(comparison.issues.find(issue=>issue.status==='both').delta,1);\nassert.ok(renderComparison(comparison).includes('only-current'));\n`);
   execFileSync(process.execPath, ['comparison-consumer.mjs', ...comparisonBundles], { cwd: temp, stdio: 'pipe' });
+  const focused = join(temp, 'baseline-focused');
+  runCli(['analyze', '--input', comparisonSources[1], '--baseline', comparisonBundles[0], '--top', '1', '--out', focused]);
+  const focusedAnalysis = JSON.parse(await readFile(join(focused, 'analysis.json'), 'utf8'));
+  const baselineProvenance = JSON.parse(await readFile(join(comparisonBundles[0], 'provenance.json'), 'utf8'));
+  assert.equal(focusedAnalysis.groups.length, 2);
+  assert.equal(focusedAnalysis.candidates.length, 1);
+  assert.equal(focusedAnalysis.candidates[0].groupId, focusedAnalysis.groups.find(group => group.message === 'Only in current').id);
+  assert.equal(focusedAnalysis.selection.mode, 'only-current');
+  assert.equal(focusedAnalysis.selection.baseline.analysisSha256, baselineProvenance.analysisSha256);
+  assert.equal(focusedAnalysis.selection.onlyCurrentGroupCount, 1);
+  assert.equal(focusedAnalysis.selection.excludedGroupCount, 1);
+  assert.match(await readFile(join(focused, 'report.md'), 'utf8'), /Baseline candidate selection/);
+  assert.match(runCli(['verify', focused, '--input', comparisonSources[1]]), /original input: checked/);
+  await writeFile(join(temp, 'baseline-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {analyzeWithBaseline} from '@ihyeon/error-to-test';\nconst analysis=await analyzeWithBaseline(await readFile(process.argv[2],'utf8'),process.argv[3],{top:1});\nassert.deepEqual(analysis,JSON.parse(await readFile(process.argv[4],'utf8')));\n`);
+  execFileSync(process.execPath, ['baseline-consumer.mjs', comparisonSources[1], comparisonBundles[0], join(focused, 'analysis.json')], { cwd: temp, stdio: 'pipe' });
+  const unchanged = join(temp, 'baseline-unchanged');
+  runCli(['analyze', '--input', comparisonSources[0], '--baseline', comparisonBundles[0], '--out', unchanged]);
+  assert.equal(JSON.parse(await readFile(join(unchanged, 'analysis.json'), 'utf8')).candidates.length, 0);
+  assert.match(runCli(['verify', unchanged]), /Suite: none/);
   for (let index = 0; index < comparisonBundles.length; index++) {
     assert.match(runCli(['verify', comparisonBundles[index], '--input', comparisonSources[index]]), /original input: checked/);
   }
@@ -118,5 +137,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile/results/comparison workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile/results/comparison/baseline workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

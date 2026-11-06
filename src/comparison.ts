@@ -94,8 +94,16 @@ function aggregate(groups: ValidGroup[]): Map<string, Aggregate> {
 const sorted = (items: Iterable<string>): string[] => [...items].sort();
 function occurrence(a: Aggregate): ComparisonOccurrence { return { count: a.count, groupIds: sorted(a.ids), releases: sorted(a.releases).map(redactText) }; }
 export async function compareBundles(baselineDirectory: string, currentDirectory: string): Promise<AnalysisComparison> {
-  const baseline = parseSnapshot((await readVerifiedBundle(baselineDirectory)).analysis, 'Baseline');
-  const current = parseSnapshot((await readVerifiedBundle(currentDirectory)).analysis, 'Current');
+  const baseline = (await readVerifiedBundle(baselineDirectory)).analysis;
+  const current = (await readVerifiedBundle(currentDirectory)).analysis;
+  return compareAnalyses(baseline, current);
+}
+
+// Shared by verified bundle comparison and baseline-aware candidate selection.
+// Identity is computed from the stored normalized fields before display redaction.
+export function compareAnalyses(baselineAnalysis: unknown, currentAnalysis: unknown): AnalysisComparison {
+  const baseline = parseSnapshot(baselineAnalysis, 'Baseline');
+  const current = parseSnapshot(currentAnalysis, 'Current');
   if (baseline.side.coverage.frequency !== current.side.coverage.frequency) throw new Error('Comparison requires matching count frequency; captured events and submitted reports cannot share a delta.');
   const before = aggregate(baseline.groups), after = aggregate(current.groups);
   const counts: Record<ComparisonStatus, number> = { 'only-current': 0, both: 0, 'only-baseline': 0 };

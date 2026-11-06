@@ -86,6 +86,26 @@ All source groups participate, including groups excluded from TC generation by `
 
 Both bundles must pass consistency verification. The command reads their verified snapshots without editing artifacts, TC states, review gates, or linked results. Markdown is the default; `--format json` returns `error-to-test/comparison-1`. `--out` requires a new file outside either bundle's `results` directory. The API equivalents are `await compareBundles(baselineDirectory, currentDirectory)` and `renderComparison(comparison)`.
 
+### Generate TCs for signatures absent from a baseline
+
+Pass a verified analysis bundle to `analyze --baseline` to focus TC generation on current signatures that were not observed in that baseline:
+
+```sh
+error-to-test analyze --input before-errors.json --out ./before
+error-to-test analyze --input current-errors.json --baseline ./before --min-count 3 --top 10 --out ./new-signature-tcs
+error-to-test init-profile ./new-signature-tcs --out ./new-signature-profile.json
+# Fill the profile with confirmed requirements, setup, actions, and assertions.
+error-to-test analyze --input current-errors.json --baseline ./before --min-count 3 --top 10 --profile ./new-signature-profile.json --out ./reviewed-new-signatures
+```
+
+The filter uses the same exact identity as `compare`, excluding release only. Every baseline group participates, even one excluded from its TC selection. Current groups absent from the baseline are selected first, then `--min-count` and `--top` apply in the existing ranked order. Counts remain per current group; different releases are not pooled to meet `--min-count`. All current groups and source coverage remain in the analysis and report. No matching candidates means a valid bundle without a suite.
+
+The analysis records `selection.mode: "only-current"`, the baseline input and verified analysis SHA-256 hashes, baseline coverage, and group selection counts. These are covered by the new bundle's analysis hash. The baseline is read once without modification; later baseline edits do not alter this saved selection. Reuse the same baseline and filters when refining the profile. Existing context questions and the review gate still apply; `--reviewed` only acknowledges review.
+
+“Absent from baseline” does not establish that an error was newly introduced or is a confirmed regression. Partial exports, different periods, and reporting practices can explain absence; comparison coverage warnings are retained. Captured-event and submitted-report sources cannot be mixed. Output must be a new directory outside the baseline's `results` directory.
+
+The async API is `await analyzeWithBaseline(content, baselineDirectory, { minCount: 3, top: 10, profile })`. It verifies the baseline bundle itself and accepts the same analysis options as `analyzeErrors`.
+
 ## Confirm the intended behavior
 
 See [examples/profile.json](examples/profile.json). Profiles use `schemaVersion: "error-to-test/profile-1"`, a name, and up to 100 scenarios. Each scenario has a unique ID, title, at least one match predicate, a requirement, its `expectedSource`, and explicit steps. Set `setupConfirmed: true` only after confirming how preconditions are established. Preconditions are descriptions; this package does not prepare accounts or data.

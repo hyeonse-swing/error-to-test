@@ -1,6 +1,8 @@
 import { parseInput, type ParseInputOptions } from './input.ts';
 import { groupObservations } from './grouping.ts';
 import { createCandidates, parseProfile } from './candidates.ts';
+import { readVerifiedBundle } from './artifacts.ts';
+import { compareAnalyses } from './comparison.ts';
 import { hash } from './validation.ts';
 import type { Analysis } from './types.ts';
 
@@ -9,7 +11,9 @@ export interface AnalyzeOptions extends ParseInputOptions {
   top?: number;
   minCount?: number;
 }
-export function analyzeErrors(content: string, options: AnalyzeOptions = {}): Analysis {
+
+interface VerifiedBaseline { analysis: unknown; analysisSha256: string }
+function analyze(content: string, options: AnalyzeOptions, baseline?: VerifiedBaseline): Analysis {
   const top = options.top ?? 100;
   if (!Number.isInteger(top) || top < 1 || top > 100) throw new Error('top must be an integer between 1 and 100.');
   const minCount = options.minCount ?? 1;
@@ -23,18 +27,57 @@ export function analyzeErrors(content: string, options: AnalyzeOptions = {}): An
   const profile = rawProfile === undefined ? undefined : parseProfile(rawProfile);
   const input = parseInput(content, options);
   const groups = groupObservations(input.observations);
-  const eligibleGroups = groups.filter(group => group.count >= minCount);
+  const source = { sha256: input.sha256, ...(profileSource !== undefined ? { profileSha256: hash(profileSource) } : {}) };
   const warnings = [...input.warnings];
-  if (eligibleGroups.length < groups.length) warnings.push(`TC selection requires at least ${minCount} supplied records per group; ${eligibleGroups.length} of ${groups.length} groups are eligible. All groups remain in analysis.json. These counts are supplied records, not global rates.`);
+  let selectedGroups = groups;
+  let selection: Analysis['selection'];
+  if (baseline) {
+    const comparison = compareAnalyses(baseline.analysis, {
+      schemaVersion: 'error-to-test/analysis-1', source, coverage: input.coverage, groups, warnings: [],
+    });
+    const onlyCurrentIds = new Set(comparison.issues.filter(issue => issue.status === 'only-current')
+      .flatMap(issue => issue.current?.groupIds ?? []));
+    selectedGroups = groups.filter(group => onlyCurrentIds.has(group.id));
+    selection = {
+      mode: 'only-current',
+      baseline: { inputSha256: comparison.baseline.inputSha256, analysisSha256: baseline.analysisSha256,
+        coverage: comparison.baseline.coverage },
+      onlyCurrentGroupCount: selectedGroups.length,
+      excludedGroupCount: groups.length - selectedGroups.length,
+    };
+    warnings.push(`Baseline TC selection: ${selection.onlyCurrentGroupCount} of ${groups.length} current groups have signatures absent from the supplied baseline; ${selection.excludedGroupCount} already observed. Selection precedes minCount and top. Absence from this baseline does not establish introduction, regression, or resolution.`);
+    // A prior baseline-aware bundle may already carry comparison notes. Keep the
+    // comparison's bounded coverage cautions without recursively echoing history.
+    warnings.push(...comparison.warnings.filter(warning => !warning.startsWith('Baseline:') && !warning.startsWith('Current:')));
+    if (comparison.baseline.coverage.duplicates || comparison.baseline.coverage.filtered) {
+      warnings.push(`Baseline source coverage: ${comparison.baseline.coverage.duplicates} duplicate and ${comparison.baseline.coverage.filtered} filtered supplied records.`);
+    }
+    if (comparison.baseline.coverage.period) {
+      warnings.push('Baseline date filtering applies only to reports with observed timestamps; undated reports may have been excluded.');
+    }
+  }
+  const eligibleGroups = selectedGroups.filter(group => group.count >= minCount);
+  if (eligibleGroups.length < selectedGroups.length) warnings.push(`TC selection requires at least ${minCount} supplied records per group; ${eligibleGroups.length} of ${selectedGroups.length} groups are eligible. All groups remain in analysis.json. These counts are supplied records, not global rates.`);
   if (eligibleGroups.length > top) warnings.push(minCount === 1
-    ? `TC selection includes the first ${top} of ${groups.length} ranked groups. All groups remain in analysis.json.`
+    ? `TC selection includes the first ${top} of ${selectedGroups.length} ranked groups. All groups remain in analysis.json.`
     : `TC selection includes the first ${top} of ${eligibleGroups.length} eligible ranked groups. All groups remain in analysis.json.`);
   return {
     schemaVersion: 'error-to-test/analysis-1',
-    source: { sha256: input.sha256, ...(profileSource !== undefined ? { profileSha256: hash(profileSource) } : {}) },
+    source,
     coverage: input.coverage,
     groups,
     candidates: createCandidates(eligibleGroups.slice(0, top), profile),
     warnings,
+    ...(selection ? { selection } : {}),
   };
+}
+
+export function analyzeErrors(content: string, options: AnalyzeOptions = {}): Analysis {
+  return analyze(content, options);
+}
+
+export async function analyzeWithBaseline(content: string, baselineDirectory: string, options: AnalyzeOptions = {}): Promise<Analysis> {
+  const baseline = await readVerifiedBundle(baselineDirectory);
+  if (typeof baseline.provenance.analysisSha256 !== 'string') throw new Error('STALE_BUNDLE: The baseline analysis hash is missing.');
+  return analyze(content, options, { analysis: baseline.analysis, analysisSha256: baseline.provenance.analysisSha256 });
 }

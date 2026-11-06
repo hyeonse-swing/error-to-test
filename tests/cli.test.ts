@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -525,5 +525,125 @@ test('compare rejects invalid, stale, incompatible, and unsafe output requests w
     const sibling = run(['compare', baseline, current, '--format', 'json', '--out', target]);
     assert.equal(sibling.status, 0, sibling.stderr);
     assert.equal(JSON.parse(await readFile(target, 'utf8')).schemaVersion, 'error-to-test/comparison-1');
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('analyze --baseline selects new signatures before ranking limits and keeps source bundles intact', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-baseline-'));
+  try {
+    const example = JSON.parse(await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8'));
+    const event = (id: string, message: string, page: string, release: string) => ({
+      ...example.events[0], eventId: id, viewId: `view-${id}`, message, page, release,
+    });
+    const baselineInput = join(temp, 'baseline.json');
+    const currentInput = join(temp, 'current.json');
+    const baseline = join(temp, 'baseline');
+    const current = join(temp, 'current');
+    await writeFile(baselineInput, JSON.stringify({ schemaVersion: 1, partial: false, events: [event('b1', 'Shared failure', '/shared', 'old')] }));
+    await writeFile(currentInput, JSON.stringify({ schemaVersion: 1, partial: false, events: [
+      event('c1', 'Shared failure', '/shared', 'new'), event('c2', 'Shared failure', '/shared', 'new'),
+      event('c3', 'Shared failure', '/shared', 'new'), event('c4', 'New failure', '/new', 'new'),
+    ] }));
+    assert.equal(run(['analyze', '--input', baselineInput, '--out', baseline]).status, 0);
+    const baselineFiles = ['analysis.json', 'report.md', 'flows/error-to-test.md', 'cases/error-to-test.json', 'provenance.json'];
+    const before = await Promise.all(baselineFiles.map(file => readFile(join(baseline, file))));
+    const selected = run(['analyze', '--input', currentInput, '--baseline', baseline, '--top', '1', '--out', current]);
+    assert.equal(selected.status, 0, selected.stderr);
+    assert.match(selected.stdout, /1 only-current groups; 1 baseline-matched groups excluded/);
+    const analysis = JSON.parse(await readFile(join(current, 'analysis.json'), 'utf8'));
+    assert.equal(analysis.groups.length, 2);
+    assert.equal(analysis.groups[0].message, 'Shared failure');
+    assert.equal(analysis.candidates.length, 1);
+    assert.equal(analysis.candidates[0].groupId, analysis.groups.find((group: { message: string }) => group.message === 'New failure').id);
+    assert.deepEqual(analysis.selection, {
+      mode: 'only-current',
+      baseline: { inputSha256: JSON.parse(before[0].toString()).source.sha256,
+        analysisSha256: JSON.parse(await readFile(join(baseline, 'provenance.json'), 'utf8')).analysisSha256,
+        coverage: JSON.parse(before[0].toString()).coverage },
+      onlyCurrentGroupCount: 1,
+      excludedGroupCount: 1,
+    });
+    assert.equal(run(['verify', current, '--input', currentInput]).status, 0);
+    assert.deepEqual(await Promise.all(baselineFiles.map(file => readFile(join(baseline, file)))), before);
+    assert.equal(run(['verify', baseline]).status, 0);
+    assert.equal(run(['results', baseline, '--format', 'json']).status, 0);
+
+    const noNew = join(temp, 'no-new');
+    const empty = run(['analyze', '--input', baselineInput, '--baseline', baseline, '--out', noNew]);
+    assert.equal(empty.status, 0, empty.stderr);
+    const noNewAnalysis = JSON.parse(await readFile(join(noNew, 'analysis.json'), 'utf8'));
+    assert.equal(noNewAnalysis.groups.length, 1);
+    assert.equal(noNewAnalysis.candidates.length, 0);
+    assert.equal(noNewAnalysis.selection.onlyCurrentGroupCount, 0);
+    await assert.rejects(stat(join(noNew, 'cases/error-to-test.json')), { code: 'ENOENT' });
+    assert.match(run(['verify', noNew]).stdout, /Suite: none/);
+    const minCount = join(temp, 'min-count');
+    const filtered = run(['analyze', '--input', currentInput, '--baseline', baseline, '--min-count', '2', '--top', '1', '--out', minCount]);
+    assert.equal(filtered.status, 0, filtered.stderr);
+    const filteredAnalysis = JSON.parse(await readFile(join(minCount, 'analysis.json'), 'utf8'));
+    assert.equal(filteredAnalysis.groups.length, 2);
+    assert.equal(filteredAnalysis.candidates.length, 0);
+    assert.equal(run(['verify', minCount]).status, 0);
+    assert.match(run(['--help']).stdout, /--baseline DIRECTORY.*before --min-count and --top/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('analyze --baseline rejects invalid sources and unsafe outputs without writing', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-baseline-invalid-'));
+  try {
+    const baseline = join(temp, 'baseline');
+    assert.equal(run(['analyze', '--error', 'Error: shared', '--out', baseline]).status, 0);
+    const target = join(temp, 'new-output');
+    const baseArgs = ['analyze', '--error', 'Error: current'];
+    for (const args of [
+      [...baseArgs, '--baseline', join(temp, 'missing')],
+      [...baseArgs, '--baseline='],
+      ['verify', baseline, '--baseline', baseline],
+      ['results', baseline, '--baseline', baseline],
+      ['init-profile', baseline, '--baseline', baseline],
+      ['compare', baseline, baseline, '--baseline', baseline],
+    ]) {
+      const rejected = run([...args, '--out', target]);
+      assert.equal(rejected.status, 1, `${args.join(' ')}: ${rejected.stderr}`);
+      await assert.rejects(stat(target), { code: 'ENOENT' });
+    }
+    const example = JSON.parse(await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8'));
+    const browserInput = join(temp, 'browser.json');
+    await writeFile(browserInput, JSON.stringify({ ...example, events: [example.events[0]] }));
+    const frequency = run(['analyze', '--input', browserInput, '--baseline', baseline, '--out', target]);
+    assert.equal(frequency.status, 1, frequency.stderr);
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+
+    const existing = join(temp, 'existing');
+    await writeFile(existing, 'keep');
+    const alias = join(temp, 'baseline-alias');
+    await symlink(baseline, alias, 'dir');
+    for (const out of [
+      join(baseline, 'results', 'new'), join(baseline, 'RESULTS', 'new'),
+      join(alias, 'results', 'new'), join(alias, 'RESULTS', 'new'), existing,
+    ]) {
+      const rejected = run([...baseArgs, '--baseline', baseline, '--out', out]);
+      assert.equal(rejected.status, 1, `${out}: ${rejected.stderr}`);
+      await assert.rejects(stat(join(baseline, 'results')), { code: 'ENOENT' });
+    }
+    await mkdir(join(baseline, 'results'));
+    const resultsAlias = join(temp, 'results-alias');
+    await symlink(join(baseline, 'results'), resultsAlias, 'dir');
+    for (const out of [join(resultsAlias, 'new'), join(resultsAlias, 'deeper', 'new')]) {
+      const rejected = run([...baseArgs, '--baseline', baseline, '--out', out]);
+      assert.equal(rejected.status, 1, `${out}: ${rejected.stderr}`);
+      assert.match(rejected.stderr, /baseline bundle results directory/);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+    assert.equal(await readFile(existing, 'utf8'), 'keep');
+    const originalReport = await readFile(join(baseline, 'report.md'), 'utf8');
+    await writeFile(join(baseline, 'report.md'), 'tampered');
+    const stale = run([...baseArgs, '--baseline', baseline, '--out', target]);
+    assert.equal(stale.status, 1);
+    assert.match(stale.stderr, /STALE_BUNDLE/);
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+    await writeFile(join(baseline, 'report.md'), originalReport);
+    assert.equal(run(['verify', baseline]).status, 0);
+    assert.equal(run(['results', baseline, '--format', 'json']).status, 0);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
