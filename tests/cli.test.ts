@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
@@ -9,6 +9,17 @@ import { createHash, randomUUID } from 'node:crypto';
 
 const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
 function run(args: string[], input?: string | Buffer) { return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', input, timeout: 15000 }); }
+async function runWithClosedStdout(args: string[]): Promise<{ status: number | null; stderr: string }> {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stdout.destroy();
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', rejectRun);
+    child.on('close', status => resolveRun({ status, stderr }));
+  });
+}
 test('options require a command; bare invocation and help remain available', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-command-'));
   try {
@@ -813,6 +824,155 @@ test('compare includes verified groups excluded from TC selection and preserves 
     assert.equal(run(['verify', current]).status, 0);
     assert.match(run(['--help']).stdout, /compare BASELINE CURRENT \[--format text\|json\]/);
     assert.match(run(['nonsense']).stderr, /compare/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('compare --max-new counts distinct only-current signatures and writes the full comparison before exit 2', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-gate-'));
+  try {
+    const example = JSON.parse(await readFile(new URL('../examples/errors.json', import.meta.url), 'utf8'));
+    const event = (id: string, release: string, message: string, page: string) => ({
+      ...example.events[0], eventId: id, viewId: `view-${id}`, release, message, page,
+    });
+    const baselineInput = join(temp, 'baseline.json');
+    const currentInput = join(temp, 'current.json');
+    const baseline = join(temp, 'baseline');
+    const current = join(temp, 'current');
+    await writeFile(baselineInput, JSON.stringify({ schemaVersion: 1, partial: false, events: [
+      event('b1', 'old', 'Shared failure', '/shared'),
+    ] }));
+    await writeFile(currentInput, JSON.stringify({ schemaVersion: 1, partial: false, events: [
+      event('c1', 'new', 'Shared failure', '/shared'), event('c2', 'new', 'Shared failure', '/shared'),
+      event('c3', 'new', 'Shared failure', '/shared'), event('c4', 'new', 'Shared failure', '/shared'),
+      event('c5', 'r1', 'New failure', '/new'), event('c6', 'r1', 'New failure', '/new'),
+      event('c7', 'r2', 'New failure', '/new'),
+    ] }));
+    for (const [input, out] of [[baselineInput, baseline], [currentInput, current]]) {
+      const analyzed = run(['analyze', '--input', input, '--min-count', '4', '--top', '1', '--out', out]);
+      assert.equal(analyzed.status, 0, analyzed.stderr);
+    }
+    const bundleFiles = [
+      [baseline, ['analysis.json', 'report.md', 'provenance.json']],
+      [current, ['analysis.json', 'report.md', 'flows/error-to-test.md', 'cases/error-to-test.json', 'provenance.json']],
+    ] as const;
+    const before = await Promise.all(bundleFiles.flatMap(([bundle, files]) => files.map(file => readFile(join(bundle, file)))));
+    const plain = run(['compare', baseline, current, '--format', 'json']);
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.equal(plain.stderr, '');
+    const comparison = JSON.parse(plain.stdout);
+    assert.deepEqual(comparison.counts, { 'only-current': 1, both: 1, 'only-baseline': 0 });
+    assert.equal(comparison.current.groupCount, 3);
+    assert.equal(comparison.current.recordCount, 7);
+    const onlyCurrent = comparison.issues.find((issue: { status: string }) => issue.status === 'only-current');
+    assert.equal(onlyCurrent.current.count, 3);
+    assert.equal(onlyCurrent.current.groupIds.length, 2);
+    assert.deepEqual(onlyCurrent.current.releases, ['r1', 'r2']);
+    const failed = run(['compare', baseline, current, '--format', 'json', '--max-new', '0']);
+    assert.equal(failed.status, 2, failed.stderr);
+    assert.equal(failed.stdout, plain.stdout);
+    assert.equal(failed.stderr, 'Comparison gate failed: 1 only-current signatures exceed maximum 0.\n');
+    const passed = run(['compare', baseline, current, '--format', 'json', '--max-new', '01']);
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.equal(passed.stdout, plain.stdout);
+    assert.equal(passed.stderr, 'Comparison gate passed: 1 only-current signatures (maximum 1).\n');
+    const noNew = run(['compare', baseline, baseline, '--format', 'json', '--max-new', '0']);
+    assert.equal(noNew.status, 0, noNew.stderr);
+    assert.equal(JSON.parse(noNew.stdout).counts['only-current'], 0);
+    assert.equal(noNew.stderr, 'Comparison gate passed: 0 only-current signatures (maximum 0).\n');
+    const markdown = join(temp, 'comparison.md');
+    const plainMarkdown = run(['compare', baseline, current]);
+    const written = run(['compare', baseline, current, '--out', markdown, '--max-new', '0']);
+    assert.equal(written.status, 2, written.stderr);
+    assert.equal(written.stdout, `Comparison written: ${markdown}\n`);
+    assert.equal(written.stderr, failed.stderr);
+    assert.equal(await readFile(markdown, 'utf8'), plainMarkdown.stdout);
+    assert.equal((await stat(markdown)).mode & 0o777, 0o600);
+    assert.deepEqual(await Promise.all(bundleFiles.flatMap(([bundle, files]) => files.map(file => readFile(join(bundle, file))))), before);
+    assert.equal(run(['verify', baseline]).status, 0);
+    assert.equal(run(['verify', current]).status, 0);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('compare --max-new rejects malformed limits before bundle access and keeps output errors at exit 1', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-gate-invalid-'));
+  try {
+    const missing = join(temp, 'missing');
+    const target = join(temp, 'out.md');
+    for (const value of ['', ' ', ' 1', '1 ', '-1', '+1', '1.0', '1e2', '0x1', 'NaN', 'Infinity', '10001']) {
+      const rejected = run(['compare', missing, missing, `--max-new=${value}`, '--out', target]);
+      assert.equal(rejected.status, 1, `${value}: ${rejected.stderr}`);
+      assert.match(rejected.stderr, /--max-new must be a decimal integer between 0 and 10000/);
+      assert.equal(rejected.stdout, '');
+      assert.equal(rejected.stderr.includes('Comparison gate'), false);
+      await assert.rejects(stat(target), { code: 'ENOENT' });
+    }
+    const acceptedLimit = run(['compare', missing, missing, '--max-new', '10000']);
+    assert.equal(acceptedLimit.status, 1);
+    assert.doesNotMatch(acceptedLimit.stderr, /--max-new must/);
+    for (const args of [
+      ['analyze', '--input', missing], ['analyze', '--error', 'Error: x'],
+      ['verify', missing], ['results', missing], ['init-profile', missing, '--out', target],
+      ['link-run', missing, '--report', missing],
+    ]) {
+      const rejected = run([...args, '--max-new', '0']);
+      assert.equal(rejected.status, 1, `${args[0]}: ${rejected.stderr}`);
+      assert.equal(rejected.stdout, '');
+      assert.equal(rejected.stderr.includes('Comparison gate'), false);
+      await assert.rejects(stat(target), { code: 'ENOENT' });
+    }
+    const baseline = join(temp, 'baseline');
+    const current = join(temp, 'current');
+    assert.equal(run(['analyze', '--error', 'Error: shared', '--out', baseline]).status, 0);
+    assert.equal(run(['analyze', '--error', 'Error: new', '--out', current]).status, 0);
+    const existing = join(temp, 'existing.md');
+    await writeFile(existing, 'keep me');
+    const internal = join(current, 'results', 'comparison.md');
+    for (const out of [existing, internal]) {
+      const rejected = run(['compare', baseline, current, '--out', out, '--max-new', '0']);
+      assert.equal(rejected.status, 1, rejected.stderr);
+      assert.equal(rejected.stdout, '');
+      assert.equal(rejected.stderr.includes('Comparison gate'), false);
+    }
+    assert.equal(await readFile(existing, 'utf8'), 'keep me');
+    await assert.rejects(stat(internal), { code: 'ENOENT' });
+    const report = join(current, 'report.md');
+    const original = await readFile(report, 'utf8');
+    await writeFile(report, 'tampered');
+    const stale = run(['compare', baseline, current, '--out', target, '--max-new', '0']);
+    assert.equal(stale.status, 1);
+    assert.equal(stale.stdout, '');
+    assert.match(stale.stderr, /STALE_BUNDLE/);
+    assert.equal(stale.stderr.includes('Comparison gate'), false);
+    await assert.rejects(stat(target), { code: 'ENOENT' });
+    await writeFile(report, original);
+    const empty = join(temp, 'empty');
+    assert.equal(run(['analyze', '--error', 'Error: filtered', '--min-count', '2', '--out', empty]).status, 0);
+    const passed = run(['compare', empty, empty, '--format', 'json', '--max-new', '0']);
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.equal(JSON.parse(passed.stdout).counts['only-current'], 0);
+    assert.equal(passed.stderr, 'Comparison gate passed: 0 only-current signatures (maximum 0).\n');
+    assert.match(run(['--help']).stdout, /--max-new N.*0\.\.10000.*exit 0.*2.*1 on error/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('compare --max-new reports a closed stdout pipe as an error without a gate outcome', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-gate-pipe-'));
+  try {
+    const baseline = join(temp, 'baseline');
+    const current = join(temp, 'current');
+    assert.equal(run(['analyze', '--error', 'Error: shared', '--out', baseline]).status, 0);
+    assert.equal(run(['analyze', '--error', 'Error: new', '--out', current]).status, 0);
+    const output = join(temp, 'comparison.md');
+    for (const args of [
+      ['compare', baseline, current, '--format', 'json', '--max-new', '0'],
+      ['compare', baseline, current, '--out', output, '--max-new', '0'],
+    ]) {
+      const result = await runWithClosedStdout(args);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /Error to Test:/);
+      assert.doesNotMatch(result.stderr, /Comparison gate|Unhandled|node:internal|at [^\n]+:\d+/);
+    }
+    assert.match(await readFile(output, 'utf8'), /# Error to Test comparison/);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 

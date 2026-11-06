@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -138,6 +138,26 @@ try {
   assert.equal(comparison.issues.find(issue => issue.status === 'both').delta, 1);
   await writeFile(join(temp, 'comparison-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {compareBundles,renderComparison} from '@ihyeon/error-to-test';\nconst comparison=await compareBundles(process.argv[2],process.argv[3]);\nassert.equal(comparison.counts.both,1);\nassert.equal(comparison.issues.find(issue=>issue.status==='both').delta,1);\nassert.ok(renderComparison(comparison).includes('only-current'));\n`);
   execFileSync(process.execPath, ['comparison-consumer.mjs', ...comparisonBundles], { cwd: temp, stdio: 'pipe' });
+  const runGate = args => spawnSync(join(temp, 'node_modules/.bin/error-to-test'), ['compare', ...comparisonBundles, ...args], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  const failedGate = runGate(['--max-new', '0', '--format', 'json']);
+  assert.equal(failedGate.status, 2, failedGate.stderr);
+  assert.deepEqual(JSON.parse(failedGate.stdout), comparison);
+  assert.equal(failedGate.stderr, 'Comparison gate failed: 1 only-current signatures exceed maximum 0.\n');
+  const passedGate = runGate(['--max-new', '1', '--format', 'json']);
+  assert.equal(passedGate.status, 0, passedGate.stderr);
+  assert.deepEqual(JSON.parse(passedGate.stdout), comparison);
+  assert.equal(passedGate.stderr, 'Comparison gate passed: 1 only-current signatures (maximum 1).\n');
+  const gateFile = join(temp, 'failed-comparison.md');
+  const savedGate = runGate(['--max-new', '0', '--out', gateFile]);
+  assert.equal(savedGate.status, 2, savedGate.stderr);
+  const gateMarkdown = await readFile(gateFile, 'utf8');
+  assert.equal(gateMarkdown, runCli(['compare', ...comparisonBundles]));
+  assert.equal((await stat(gateFile)).mode & 0o777, 0o600);
+  const existingGateOutput = runGate(['--max-new', '0', '--out', gateFile]);
+  assert.equal(existingGateOutput.status, 1);
+  assert.equal(existingGateOutput.stdout, '');
+  assert.ok(!existingGateOutput.stderr.includes('Comparison gate'));
+  assert.equal(await readFile(gateFile, 'utf8'), gateMarkdown);
   const focused = join(temp, 'baseline-focused');
   runCli(['analyze', '--input', comparisonSources[1], '--baseline', comparisonBundles[0], '--top', '1', '--out', focused]);
   const focusedAnalysis = JSON.parse(await readFile(join(focused, 'analysis.json'), 'utf8'));
@@ -207,5 +227,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile extension/results/comparison/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

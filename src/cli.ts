@@ -25,7 +25,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test init-profile new-directory --profile existing.json --out extended.json
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md]
-  error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md]
+  error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
 Options:
   --input FILE           SDK export, manual JSON, JSONL, or plain error text; repeat for same-format files in order (analyze: sole - for stdin)
@@ -52,6 +52,7 @@ Options:
   --out FILE             New init-profile JSON file; existing files are never overwritten
   --out FILE             New results summary file; existing files are never overwritten
   --out FILE             New comparison file; existing files are never overwritten
+  --max-new N            Compare only: allow 0..10000 only-current signatures; exit 0 within limit, 2 over limit, 1 on error
   --reviewed             Acknowledge review; unresolved questions still block cases
   --report FILE          Normalized Flow QA report (link-run only)
   --version, -v          Print the package version
@@ -73,6 +74,22 @@ async function stdinText(): Promise<string> {
   const input = Buffer.concat(chunks);
   if (!isUtf8(input)) throw new Error('Input must be valid UTF-8.');
   return input.toString('utf8');
+}
+async function writeGateOutput(content: string): Promise<void> {
+  await new Promise<void>((resolveWrite, rejectWrite) => {
+    const onError = (error: Error) => { process.stdout.off('error', onError); rejectWrite(error); };
+    process.stdout.on('error', onError);
+    process.stdout.write(content, (error?: Error | null) => {
+      if (error) {
+        rejectWrite(error);
+        // Writable can emit 'error' after invoking the failed write callback.
+        setImmediate(() => process.stdout.off('error', onError));
+      } else {
+        process.stdout.off('error', onError);
+        resolveWrite();
+      }
+    });
+  });
 }
 async function inputContents(paths: string[], allowStdin: boolean): Promise<string | readonly string[]> {
   if (paths.length < 1 || paths.length > 50) throw new Error('Provide between 1 and 50 --input files.');
@@ -116,7 +133,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, 'min-count': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -195,16 +212,30 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command === 'compare') {
     if (positionals.length !== 3 || !positionals[1] || !positionals[2]) throw new Error('compare requires BASELINE and CURRENT bundle directories.');
-    if (Object.keys(values).some(key => !['format', 'out', 'help'].includes(key))) throw new Error('Unsupported option for compare. Use only --format text|json and --out FILE.');
+    if (Object.keys(values).some(key => !['format', 'out', 'max-new', 'help'].includes(key))) throw new Error('Unsupported option for compare. Use only --format text|json, --out FILE, and --max-new N.');
     const format = values.format ?? 'text';
     if (format !== 'text' && format !== 'json') throw new Error('compare --format must be text or json.');
+    const maxNewRaw = values['max-new'];
+    if (maxNewRaw !== undefined && (!/^[0-9]+$/.test(maxNewRaw) || Number(maxNewRaw) > 10000)) {
+      throw new Error('compare --max-new must be a decimal integer between 0 and 10000.');
+    }
+    const maxNew = maxNewRaw === undefined ? undefined : Number(maxNewRaw);
     const baseline = resolve(positionals[1]);
     const current = resolve(positionals[2]);
     const comparison = await compareBundles(baseline, current);
     const content = format === 'json' ? jsonText(comparison) : renderComparison(comparison);
     if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The comparison exceeds 64 MiB. Narrow the bundles before requesting output.');
+    const finishGate = () => {
+      if (maxNew === undefined) return;
+      const count = comparison.counts['only-current'];
+      const passed = count <= maxNew;
+      process.stderr.write(`Comparison gate ${passed ? 'passed' : 'failed'}: ${count} only-current signatures ${passed ? `(maximum ${maxNew}).` : `exceed maximum ${maxNew}.`}\n`);
+      if (!passed) process.exitCode = 2;
+    };
     if (values.out === undefined) {
-      process.stdout.write(content);
+      if (maxNew === undefined) process.stdout.write(content);
+      else await writeGateOutput(content);
+      finishGate();
       return;
     }
     const out = resolve(values.out);
@@ -220,7 +251,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output file already exists. Choose a new --out FILE path.');
       throw error;
     }
-    process.stdout.write(`Comparison written: ${out}\n`);
+    const written = `Comparison written: ${out}\n`;
+    if (maxNew === undefined) process.stdout.write(written);
+    else await writeGateOutput(written);
+    finishGate();
     return;
   }
   if (command === 'verify') {
@@ -235,6 +269,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, results, or compare. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
+  if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
   const format = values.format ?? 'auto';

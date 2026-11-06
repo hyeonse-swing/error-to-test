@@ -131,6 +131,27 @@ All source groups participate, including groups excluded from TC generation by `
 
 Both bundles must pass consistency verification. The command reads their verified snapshots without editing artifacts, TC states, review gates, or linked results. Markdown is the default; `--format json` returns `error-to-test/comparison-1`. `--out` requires a new file outside either bundle's `results` directory. The API equivalents are `await compareBundles(baselineDirectory, currentDirectory)` and `renderComparison(comparison)`.
 
+### Limit newly observed signatures in CI
+
+Set `--max-new N` to fail a CI step when the supplied current analysis has more than N `only-current` signatures:
+
+```sh
+error-to-test compare ./before ./current --max-new 0
+error-to-test compare ./before ./current --max-new 2 --format json --out ./comparison.json
+```
+
+The limit accepts decimal integers from 0 to 10,000. It counts distinct comparison signatures across all retained groups, including groups excluded from TC generation. Release groups sharing the same comparison key count once. Record counts and count increases do not affect this limit.
+
+| Exit code | Result |
+| --- | --- |
+| `0` | Comparison succeeded and the limit was met, or no limit was requested |
+| `1` | Invalid options, incompatible/stale inputs, or an output error |
+| `2` | Comparison succeeded and the `only-current` count exceeded the limit |
+
+On limit failure the full report is still printed or saved, so CI can retain it for review. A numeric pass/fail summary goes to stderr; JSON stdout remains the unchanged `error-to-test/comparison-1` object. Output errors take precedence and preserve existing files. Without `--max-new`, existing comparison behavior is unchanged. The option is available only on `compare`.
+
+Choose snapshots with the intended project, environment, period, and collection scope. Partial-export and coverage warnings remain in the report. This limit describes signatures absent from the supplied baseline; it does not establish when an error was introduced, execute TCs, or change their review state. API callers can apply their own threshold to `comparison.counts['only-current']`.
+
 ### Generate TCs for signatures absent from a baseline
 
 Pass a verified analysis bundle to `analyze --baseline` to focus TC generation on current signatures that were not observed in that baseline:
