@@ -107,6 +107,7 @@ export async function readBoundedFile(path: string, maxBytes = 10 * 1024 * 1024)
 export async function readVerifiedBundle(directory: string, options: { input?: string | readonly string[]; profile?: string } = {}): Promise<{
   analysis: Record<string, unknown>;
   provenance: Record<string, unknown>;
+  suite?: Record<string, unknown>;
   verification: { suite: boolean; reviewed: boolean; sourceChecked: boolean };
 }> {
   const root = resolve(directory);
@@ -135,12 +136,14 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
   });
   if (JSON.stringify(mappings) !== JSON.stringify(provenance.mappings)) throw new Error('STALE_BUNDLE: Case provenance mappings no longer match the analysis.');
   let suiteExists = false;
+  let verifiedSuite: Record<string, unknown> | undefined;
   if (provenance.suiteSha256 !== undefined) {
     const content = await readBoundedFile(resolve(root, 'cases/error-to-test.json'), 8 * 1024 * 1024);
     if (hash(content) !== provenance.suiteSha256) throw new Error('STALE_BUNDLE: The exported suite changed. Regenerate the bundle after review.');
     const suite = parse(content, 'suite'), suiteSource = record(suite.source, 'suite.source');
     if (suite.schemaVersion !== 'flow-qa/suite-1' || suiteSource.file !== 'flows/error-to-test.md' || suiteSource.sha256 !== provenance.flowSha256) throw new Error('STALE_BUNDLE: Suite source no longer matches the flow.');
     suiteExists = true;
+    verifiedSuite = suite;
   }
   if (options.input !== undefined) {
     const provided = inputSource(options.input);
@@ -151,7 +154,7 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
     if (!sameFiles || provided.sha256 !== text(provenance.inputSha256, 'provenance.inputSha256')) throw new Error('STALE_BUNDLE: Input changed since analysis. Supply every original file in the same order.');
   }
   if (options.profile !== undefined && hash(options.profile) !== provenance.profileSha256) throw new Error('STALE_BUNDLE: Profile changed since analysis.');
-  return { analysis, provenance, verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
+  return { analysis, provenance, ...(verifiedSuite === undefined ? {} : { suite: verifiedSuite }), verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
 }
 export async function verifyBundle(directory: string, options: { input?: string | readonly string[]; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
   return (await readVerifiedBundle(directory, options)).verification;

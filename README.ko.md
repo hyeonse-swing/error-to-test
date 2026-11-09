@@ -183,6 +183,25 @@ flow-qa init
 flow-qa ui
 ```
 
+실행 전에는 `readiness`로 **선택된 TC의 기록된 차단 사유**를 모아 확인할 수 있습니다.
+
+```sh
+error-to-test readiness ./review-analysis
+error-to-test readiness ./review-analysis --format json
+```
+
+번들을 검증한 뒤 초안·추가 정보 필요·실행 차단 건수, 검토 확인 여부와 TC별 미해결 질문을 표시합니다. 실제 내보낸 Flow QA suite의 질문도 반영하므로 검토 대기나 민감한 실행 단계 때문에 차단된 경우도 남습니다.
+
+| 종료 코드 | 의미 |
+| --- | --- |
+| `0` | 선택된 TC가 하나 이상이고, 모두 검토된 초안이며 기록된 차단 사유가 없음 |
+| `1` | 잘못된 옵션·잘못되거나 변경된 번들·출력 오류 |
+| `2` | 차단된 TC가 있거나 선택된 TC가 없음 |
+
+전체 보고서를 stdout에 출력한 뒤 0 또는 2를 반환합니다. JSON은 `error-to-test/readiness-1`이며 `status`(`ready`·`blocked`·`empty`), 검토 상태·건수·TC별 `blockers`·입력/분석/suite 해시를 제공합니다. API는 `await readReadiness(directory)`와 `renderReadiness(summary)`이며 API 호출은 종료 코드를 변경하지 않습니다.
+
+저장된 번들의 질문과 검토 상태를 점검하는 기능입니다. 브라우저 실행·계정·준비 데이터·수집 범위를 확인하거나 연결 실행 결과를 읽지는 않습니다. `--top`·`--min-count`·이전 분석 기준으로 제외된 묶음은 선택 TC 건수에 포함되지 않습니다. 검토 확인만으로 미해결 맥락이 사라지지 않으며, 빈 선택도 통과시키지 않습니다. 원본 입력·프로필 바이트 확인은 `verify --input ... --profile ...`로 별도 수행하세요. 번들 경로와 선택적인 `--format text|json`만 받으며 파일을 저장하거나 기존 TC를 승인하지 않습니다.
+
 Flow QA 설치와 실행 대상 설정은 별도로 필요합니다. 위 `flows/`·`cases/` 구조를 기존 검토 화면에서 읽을 수 있습니다. 분석 명령은 브라우저를 실행하거나 외부 모델에 요청하지 않습니다. TC 통과만으로 원래 오류를 수정 완료 처리하지 않습니다.
 
 실행 후 `node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json`으로 결과를 원래 오류 묶음에 연결할 수 있습니다. suite 해시와 모든 case ID가 일치해야 하며, 결과는 `results/<runId>.json`에 저장합니다. 원본 e2e 리포트 대신 Flow QA가 정리한 `report-1`을 사용하세요.

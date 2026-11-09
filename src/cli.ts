@@ -10,6 +10,7 @@ import { createProfileTemplate } from './profile-template.ts';
 import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
 import { readRunSummary, renderRunSummary } from './run-summary.ts';
+import { readReadiness, renderReadiness } from './readiness.ts';
 import type { Analysis, EventType, Runtime } from './types.ts';
 
 const help = `Error to Test — local error analysis and regression TC drafts
@@ -25,6 +26,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test init-profile new-directory --profile existing.json --out extended.json
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md]
+  error-to-test readiness new-directory [--format text|json]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
 Options:
@@ -33,6 +35,7 @@ Options:
   --format auto|json|jsonl|text Analyze input format; JSONL requires explicit selection and one record per line; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
   --format text|json      Compare format (default: text Markdown)
+  --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
   --baseline DIRECTORY   Select only signatures absent from this verified bundle, before --min-count and --top; retain all groups in analysis.json (analyze only)
   --project NAME         Metadata for a manual report
@@ -144,7 +147,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, link-run, results, or compare. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, link-run, results, compare, or readiness. See --help.');
     process.stdout.write(help);
     return;
   }
@@ -210,6 +213,18 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Results summary written: ${out}\n`);
     return;
   }
+  if (command === 'readiness') {
+    if (positionals.length !== 2 || !positionals[1]?.trim()) throw new Error('readiness requires one bundle directory.');
+    if (Object.keys(values).some(key => !['format', 'help'].includes(key))) throw new Error('Unsupported option for readiness. Use only --format text|json.');
+    const format = values.format ?? 'text';
+    if (format !== 'text' && format !== 'json') throw new Error('readiness --format must be text or json.');
+    const summary = await readReadiness(resolve(positionals[1]));
+    const content = format === 'json' ? jsonText(summary) : renderReadiness(summary);
+    if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The readiness summary exceeds 64 MiB. Narrow the bundle before requesting output.');
+    await writeGateOutput(content);
+    if (summary.status !== 'ready') process.exitCode = 2;
+    return;
+  }
   if (command === 'compare') {
     if (positionals.length !== 3 || !positionals[1] || !positionals[2]) throw new Error('compare requires BASELINE and CURRENT bundle directories.');
     if (Object.keys(values).some(key => !['format', 'out', 'max-new', 'help'].includes(key))) throw new Error('Unsupported option for compare. Use only --format text|json, --out FILE, and --max-new N.');
@@ -267,7 +282,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, results, or compare. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, results, compare, or readiness. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');

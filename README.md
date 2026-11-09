@@ -238,6 +238,33 @@ flow-qa ui
 
 Flow QA is installed/configured separately. Its UI can read this `flows/` + `cases/` layout. Select the intended test target, review the cases in Flow QA, and execute there or with its CLI. Source changes invalidate existing bundles/suites; regenerate after review. `verify` checks artifact consistency, and checks original input/profile bytes only when supplied. It is not a signature or proof that a testcase fixes the reported cause. A passing functional assertion does not automatically close an error issue.
 
+### Check recorded execution blockers
+
+`readiness` verifies an existing bundle and summarizes the selected TCs before execution. It shows draft/needs-context counts, review acknowledgement, and each case's outstanding questions, including blockers recorded in the exported Flow QA suite.
+
+```sh
+error-to-test readiness ./analysis
+error-to-test readiness ./analysis --format json
+```
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | At least one selected case; every case is a reviewed draft with no recorded blockers |
+| `1` | Invalid options, invalid or changed bundle, or output error |
+| `2` | Some selected cases are blocked, or no cases were selected |
+
+The full Markdown/JSON report is written to stdout before returning `0` or `2`. JSON uses `error-to-test/readiness-1`, with `status` (`ready`, `blocked`, or `empty`), `reviewed`, candidate counts, per-case `blockers`, and input/analysis/suite hashes. An empty selection is never a successful readiness check. `--reviewed` is an analyze option; it cannot approve an existing bundle through `readiness`.
+
+This checks recorded blockers in the verified snapshot. It does not execute a browser, test credentials or setup, read linked run results, or establish source collection completeness. Groups excluded by `--top`, `--min-count`, or baseline selection are outside the selected-case counts. Drafts still need review; acknowledging review does not clear missing context. Original input/profile bytes are not rechecked by this command; use `verify --input ... --profile ...` for that. The command accepts only a bundle directory and optional `--format text|json`, writes no files, and preserves all artifacts.
+
+```js
+import { readReadiness, renderReadiness } from '@ihyeon/error-to-test';
+
+const summary = await readReadiness('./analysis');
+console.log(renderReadiness(summary));
+// API calls return a summary; only the CLI assigns readiness exit codes.
+```
+
 ## JavaScript API
 
 ```js

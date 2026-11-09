@@ -83,6 +83,34 @@ try {
   assert.ok(extended.candidates.every(candidate => candidate.state === 'draft'));
   assert.equal(extended.candidates.find(candidate => candidate.ruleId === profile.scenarios[0].id).id, refined.candidates[0].id);
   assert.ok(JSON.parse(await readFile(join(extendedAnalysis, 'cases/error-to-test.json'), 'utf8')).cases.every(test => test.questions.some(question => question.includes('Review this draft'))));
+  const readinessCli = args => spawnSync(join(temp, 'node_modules/.bin/error-to-test'), ['readiness', ...args], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  const pendingReadiness = readinessCli([extendedAnalysis, '--format', 'json']);
+  assert.equal(pendingReadiness.status, 2, pendingReadiness.stderr);
+  assert.equal(pendingReadiness.stderr, '');
+  const pendingSummary = JSON.parse(pendingReadiness.stdout);
+  assert.equal(pendingSummary.schemaVersion, 'error-to-test/readiness-1');
+  assert.equal(pendingSummary.status, 'blocked');
+  assert.equal(pendingSummary.counts.draft, 2);
+  assert.equal(pendingSummary.counts.ready, 0);
+  assert.ok(pendingSummary.cases.every(test => test.blockers.length));
+  const executionReady = join(temp, 'execution-ready');
+  runCli(['analyze', '--input', extensionInput, '--format', 'jsonl', '--page', '/items', '--runtime', 'browser', '--profile', expandedFile, '--reviewed', '--out', executionReady]);
+  const readyReadiness = readinessCli([executionReady, '--format', 'json']);
+  assert.equal(readyReadiness.status, 0, readyReadiness.stderr);
+  const readySummary = JSON.parse(readyReadiness.stdout);
+  assert.equal(readySummary.status, 'ready');
+  assert.equal(readySummary.counts.ready, 2);
+  assert.ok(readySummary.cases.every(test => test.blockers.length === 0));
+  const noCandidates = join(temp, 'no-candidates');
+  runCli(['analyze', '--input', extensionInput, '--format', 'jsonl', '--min-count', '2', '--out', noCandidates]);
+  const emptyReadiness = readinessCli([noCandidates, '--format', 'json']);
+  assert.equal(emptyReadiness.status, 2, emptyReadiness.stderr);
+  assert.equal(JSON.parse(emptyReadiness.stdout).status, 'empty');
+  const invalidReadiness = readinessCli([executionReady, '--out', join(temp, 'unsupported.json')]);
+  assert.equal(invalidReadiness.status, 1);
+  assert.equal(invalidReadiness.stdout, '');
+  await writeFile(join(temp, 'readiness-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readReadiness,renderReadiness} from '@ihyeon/error-to-test';\nconst summary=await readReadiness(process.argv[2]);\nassert.equal(summary.status,'ready');\nassert.equal(summary.counts.ready,2);\nassert.match(renderReadiness(summary),/readiness/i);\n`);
+  execFileSync(process.execPath, ['readiness-consumer.mjs', executionReady], { cwd: temp, stdio: 'pipe' });
   assert.equal(await readFile(profileFile, 'utf8'), JSON.stringify(profile));
   assert.match(runCli(['verify', extendedAnalysis, '--input', extensionInput, '--profile', expandedFile]), /original input: checked/);
   const noRuns = JSON.parse(runCli(['results', reviewed, '--format', 'json']));
@@ -227,5 +255,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }
