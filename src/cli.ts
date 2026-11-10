@@ -17,6 +17,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
 
   error-to-test analyze --input errors-1.json --input errors-2.json --profile profile.json --out new-directory
   error-to-test analyze --input errors.json --baseline previous-bundle --out new-directory
+  error-to-test analyze --input errors.json --group GROUP_ID --group OTHER_GROUP_ID --out selected-directory
   error-to-test analyze --input error.txt --format text --page /items --out new-directory
   error-to-test analyze --input errors.jsonl --format jsonl --out new-directory
   error-to-test analyze --error "TypeError: item is undefined" --page /items --out new-directory
@@ -50,6 +51,7 @@ Options:
   --expected-source TEXT Expected-result source (--error only)
   --from ISO --to ISO    Filter observed timestamps; undated reports are excluded
   --min-count N          Select groups with at least N records after dedup/date filtering (1..10000)
+  --group GROUP_ID       Select TCs only for these exact current group IDs; repeat up to 100 times (analyze only; before --min-count/--top)
   --top N                Generate TCs for the first N eligible ranked groups (1..100; after --min-count)
   --out DIRECTORY        New analyze directory; existing files are never overwritten
   --out FILE             New init-profile JSON file; existing files are never overwritten
@@ -136,7 +138,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -315,6 +317,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     project: values.project, environment: values.environment, release: values.release, page: values.page, type: values.type as EventType | undefined, runtime: values.runtime as Runtime | undefined,
     from: values.from, to: values.to, ...(values.top !== undefined ? { top: Number(values.top) } : {}),
     ...(values['min-count'] !== undefined ? { minCount: Number(values['min-count']) } : {}),
+    ...(values.group !== undefined ? { groupIds: values.group } : {}),
   };
   const baseline = values.baseline === undefined ? undefined : resolve(values.baseline);
   const analysis = baseline === undefined ? analyzeErrors(content, options) : await analyzeWithBaseline(content, baseline, options);
@@ -326,6 +329,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   const drafts = analysis.candidates.filter(candidate => candidate.state === 'draft').length;
   process.stdout.write(`${analysis.groups.length} error groups; ${analysis.candidates.length} TC candidates (${drafts} drafts, ${analysis.candidates.length - drafts} need context).\n`);
   if (analysis.selection) process.stdout.write(`${analysis.selection.onlyCurrentGroupCount} only-current groups; ${analysis.selection.excludedGroupCount} baseline-matched groups excluded from TC selection.\n`);
+  if (analysis.groupFilter) process.stdout.write(`${analysis.groupFilter.groupIds.length} explicit group IDs requested; min-count, top, and baseline selection still apply.\n`);
   process.stdout.write(`Review ${resolve(out, 'report.md')}\n${files.length} artifacts written. Review acknowledgment: ${values.reviewed ? 'yes' : 'pending'}.\n`);
 }
 export function reportCliError(error: unknown): void {

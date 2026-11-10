@@ -10,6 +10,7 @@ export interface AnalyzeOptions extends ParseInputOptions {
   profile?: unknown;
   top?: number;
   minCount?: number;
+  groupIds?: readonly string[];
 }
 
 interface VerifiedBaseline { analysis: unknown; analysisSha256: string }
@@ -18,6 +19,12 @@ function analyze(content: string | readonly string[], options: AnalyzeOptions, b
   if (!Number.isInteger(top) || top < 1 || top > 100) throw new Error('top must be an integer between 1 and 100.');
   const minCount = options.minCount ?? 1;
   if (!Number.isInteger(minCount) || minCount < 1 || minCount > 10000) throw new Error('minCount must be an integer between 1 and 10000.');
+  const requestedGroupIds = options.groupIds;
+  if (requestedGroupIds !== undefined && (!Array.isArray(requestedGroupIds) || requestedGroupIds.length < 1 || requestedGroupIds.length > 100 ||
+    !requestedGroupIds.every(id => typeof id === 'string' && /^group-[0-9a-f]{16}$/.test(id)))) {
+    throw new Error('groupIds must contain 1 to 100 valid group IDs.');
+  }
+  const groupIds = requestedGroupIds === undefined ? undefined : [...new Set(requestedGroupIds)].sort();
   let rawProfile = options.profile;
   const profileSource = typeof rawProfile === 'string' ? rawProfile : rawProfile === undefined ? undefined : JSON.stringify(rawProfile);
   if (typeof rawProfile === 'string') {
@@ -27,6 +34,9 @@ function analyze(content: string | readonly string[], options: AnalyzeOptions, b
   const profile = rawProfile === undefined ? undefined : parseProfile(rawProfile);
   const input = parseInput(content, options);
   const groups = groupObservations(input.observations);
+  if (groupIds && groupIds.some(id => !groups.some(group => group.id === id))) {
+    throw new Error('A requested group ID was not found in the filtered input.');
+  }
   const source = { sha256: input.sha256, ...(input.inputs ? { inputs: input.inputs } : {}),
     ...(profileSource !== undefined ? { profileSha256: hash(profileSource) } : {}) };
   const warnings = [...input.warnings];
@@ -60,6 +70,11 @@ function analyze(content: string | readonly string[], options: AnalyzeOptions, b
       warnings.push('Baseline JSONL has no export coverage metadata; partial false means unmarked, and collection completeness and retention are unknown.');
     }
   }
+  if (groupIds) {
+    const requested = new Set(groupIds);
+    selectedGroups = selectedGroups.filter(group => requested.has(group.id));
+    warnings.push(`Explicit group TC selection: ${groupIds.length} requested groups; ${selectedGroups.length} intersect the current selection before minCount and top. All groups remain in analysis.json.`);
+  }
   const eligibleGroups = selectedGroups.filter(group => group.count >= minCount);
   if (eligibleGroups.length < selectedGroups.length) warnings.push(`TC selection requires at least ${minCount} supplied records per group; ${eligibleGroups.length} of ${selectedGroups.length} groups are eligible. All groups remain in analysis.json. These counts are supplied records, not global rates.`);
   if (eligibleGroups.length > top) warnings.push(minCount === 1
@@ -73,6 +88,7 @@ function analyze(content: string | readonly string[], options: AnalyzeOptions, b
     candidates: createCandidates(eligibleGroups.slice(0, top), profile),
     warnings,
     ...(selection ? { selection } : {}),
+    ...(groupIds ? { groupFilter: { groupIds } } : {}),
   };
 }
 

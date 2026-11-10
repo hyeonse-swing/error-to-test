@@ -172,6 +172,25 @@ The analysis records `selection.mode: "only-current"`, the baseline input and ve
 
 The async API is `await analyzeWithBaseline(content, baselineDirectory, { minCount: 3, top: 10, profile })`. It verifies the baseline bundle itself and accepts the same analysis options as `analyzeErrors`.
 
+### Generate TCs for specific error groups
+
+Use `--group` to focus on exact group IDs from an initial `report.md` or `analysis.json`:
+
+```sh
+error-to-test analyze --input errors.json --out ./all-errors
+# Replace these example IDs with actual IDs from ./all-errors/report.md.
+error-to-test analyze --input errors.json --group group-0123456789abcdef --group group-fedcba9876543210 --out ./selected-tcs
+error-to-test init-profile ./selected-tcs --out ./selected-profile.json
+```
+
+Repeat `--group` up to 100 times. Each ID must have the exact `group-` plus 16 lowercase hexadecimal digits format and exist in the current input after source/date filters. Duplicate IDs are counted once. Unknown IDs fail before a bundle is written, so an ID from a different release, changed input, or excluded period cannot silently generate an empty suite. Reuse the same input files, order, manual metadata, and date filters used to obtain the IDs.
+
+Requested groups are intersected with any `--baseline` selection, then `--min-count` and `--top` apply in the original ranked order. Argument order does not change priority. A known group can still be excluded by these conditions; zero selected cases creates a valid bundle without a suite, and `readiness` reports `empty` with exit `2`. A selected group may produce several profile-based TCs as before.
+
+The complete observed groups, input hashes, and source coverage remain in the new bundle. `analysis.groupFilter.groupIds` stores the sorted, deduplicated requested IDs, covered by the analysis hash, and the report records the scope. Comparison and baseline counts continue to use all observed groups. Missing-context and review questions still block execution. Omitting `--group` keeps the existing selection behavior; other commands reject this analyze-only option.
+
+The API accepts `analyzeErrors(content, { groupIds: [groupId], top: 10 })` and the same option in `analyzeWithBaseline()`. `groupIds` must be a nonempty array of at most 100 entries; it is not mutated.
+
 ## Confirm the intended behavior
 
 See [examples/profile.json](examples/profile.json). Profiles use `schemaVersion: "error-to-test/profile-1"`, a name, and up to 100 scenarios. Each scenario has a unique ID, title, at least one match predicate, a requirement, its `expectedSource`, and explicit steps. Set `setupConfirmed: true` only after confirming how preconditions are established. Preconditions are descriptions; this package does not prepare accounts or data.

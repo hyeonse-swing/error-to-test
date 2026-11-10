@@ -126,6 +126,7 @@ export interface Analysis {
     onlyCurrentGroupCount: number;
     excludedGroupCount: number;
   };
+  groupFilter?: { groupIds: string[] };
 }
 export interface FlowQaSuite {
   schemaVersion: 'flow-qa/suite-1';

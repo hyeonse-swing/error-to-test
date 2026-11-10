@@ -199,6 +199,23 @@ try {
   assert.equal(focusedAnalysis.selection.excludedGroupCount, 1);
   assert.match(await readFile(join(focused, 'report.md'), 'utf8'), /Baseline candidate selection/);
   assert.match(runCli(['verify', focused, '--input', comparisonSources[1]]), /original input: checked/);
+  const explicitId = focusedAnalysis.groups.find(group => group.message === 'Only in current').id;
+  const explicit = join(temp, 'explicit-group');
+  runCli(['analyze', '--input', comparisonSources[1], '--group', explicitId, '--group', explicitId, '--top', '1', '--out', explicit]);
+  const explicitAnalysis = JSON.parse(await readFile(join(explicit, 'analysis.json'), 'utf8'));
+  assert.deepEqual(explicitAnalysis.groups, focusedAnalysis.groups);
+  assert.deepEqual(explicitAnalysis.source, focusedAnalysis.source);
+  assert.deepEqual(explicitAnalysis.coverage, focusedAnalysis.coverage);
+  assert.deepEqual(explicitAnalysis.groupFilter, { groupIds: [explicitId] });
+  assert.deepEqual(explicitAnalysis.candidates.map(candidate => candidate.groupId), [explicitId]);
+  assert.match(await readFile(join(explicit, 'report.md'), 'utf8'), /Explicit group selection/);
+  assert.match(runCli(['verify', explicit, '--input', comparisonSources[1]]), /original input: checked/);
+  assert.deepEqual(JSON.parse(runCli(['compare', comparisonBundles[0], explicit, '--format', 'json'])).counts, comparison.counts);
+  const invalidGroup = spawnSync(join(temp, 'node_modules/.bin/error-to-test'), ['analyze', '--input', comparisonSources[1], '--group', 'group-0000000000000000', '--out', join(temp, 'unknown-group')], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(invalidGroup.status, 1);
+  assert.equal(invalidGroup.stdout, '');
+  await writeFile(join(temp, 'group-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {analyzeErrors,analyzeWithBaseline} from '@ihyeon/error-to-test';\nconst [input,baseline,bundle,id]=process.argv.slice(2);\nconst content=await readFile(input,'utf8');\nassert.deepEqual(analyzeErrors(content,{groupIds:[id,id],top:1}),JSON.parse(await readFile(bundle+'/analysis.json','utf8')));\nconst analysis=await analyzeWithBaseline(content,baseline,{groupIds:[id]});\nassert.equal(analysis.selection.onlyCurrentGroupCount,1);\nassert.deepEqual(analysis.candidates.map(candidate=>candidate.groupId),[id]);\n`);
+  execFileSync(process.execPath, ['group-consumer.mjs', comparisonSources[1], comparisonBundles[0], explicit, explicitId], { cwd: temp, stdio: 'pipe' });
   await writeFile(join(temp, 'baseline-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {analyzeWithBaseline} from '@ihyeon/error-to-test';\nconst analysis=await analyzeWithBaseline(await readFile(process.argv[2],'utf8'),process.argv[3],{top:1});\nassert.deepEqual(analysis,JSON.parse(await readFile(process.argv[4],'utf8')));\n`);
   execFileSync(process.execPath, ['baseline-consumer.mjs', comparisonSources[1], comparisonBundles[0], join(focused, 'analysis.json')], { cwd: temp, stdio: 'pipe' });
   const unchanged = join(temp, 'baseline-unchanged');
@@ -255,5 +272,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI group selection/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

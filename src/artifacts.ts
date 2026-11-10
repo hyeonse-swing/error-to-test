@@ -31,6 +31,11 @@ export function renderReport(analysis: Analysis): string {
     'The source SHA-256 commits to the ordered file hashes and byte lengths. Verify with every original file in the same order.',
     ...analysis.source.inputs.map((input, index) => `${index + 1}. SHA-256: ${input.sha256} · Bytes: ${input.byteLength}`),
   ].join('\n')), '');
+  if (analysis.groupFilter) lines.push('## Explicit group selection', '', literal([
+    `Requested group IDs: ${analysis.groupFilter.groupIds.join(', ')}`,
+    'TCs are selected from these exact current groups, intersected with any baseline selection, before min-count and top. Input ID order does not change ranking.',
+    'All observed groups remain in this analysis. Unselected groups are outside the TC scope.',
+  ].join('\n')), '');
   if (analysis.selection) lines.push('## Baseline candidate selection', '', literal([
     'Mode: only-current (signatures absent from the supplied baseline)',
     `Baseline input SHA-256: ${analysis.selection.baseline.inputSha256}`,

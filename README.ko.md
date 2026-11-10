@@ -137,6 +137,21 @@ error-to-test analyze --input current-errors.json --baseline ./before --min-coun
 
 이전에 없었다는 표시가 새로 유입된 버그나 회귀를 확정하지는 않습니다. 부분 내보내기·기간·수집 범위 차이 등 비교 경고를 유지하고, 수집 이벤트와 수동 제출 보고서를 섞으면 거부합니다. 출력은 이전 번들의 `results` 폴더 밖에 있는 새 디렉터리만 허용합니다. API는 `await analyzeWithBaseline(content, baselineDirectory, { minCount: 3, top: 10, profile })`이며 이전 번들 검증도 수행합니다.
 
+**특정 오류 묶음만 골라 TC를 생성**하려면 `--group`을 사용하세요. 먼저 분석한 `report.md`나 `analysis.json`에서 묶음 ID를 확인합니다.
+
+```sh
+error-to-test analyze --input errors.json --out ./all-errors
+# 아래 예시 ID를 ./all-errors/report.md의 실제 ID로 바꾸세요.
+error-to-test analyze --input errors.json --group group-0123456789abcdef --group group-fedcba9876543210 --out ./selected-tcs
+error-to-test init-profile ./selected-tcs --out ./selected-profile.json
+```
+
+최대 100회 지정할 수 있으며 중복 ID는 한 번만 적용합니다. `group-` 뒤에 소문자 16진수 16자리가 붙는 정확한 ID여야 하며, 현재 입력의 원본·날짜 필터를 적용한 뒤에도 존재해야 합니다. 다른 릴리스·변경된 입력·제외된 기간의 ID 등 알 수 없는 ID는 번들 생성 전에 오류로 알립니다. ID를 얻은 분석과 같은 원본 파일·순서·수동 메타데이터·날짜 필터로 다시 분석하세요.
+
+지정한 묶음과 `--baseline`의 교집합에 기존 순위대로 `--min-count`, `--top`을 적용합니다. ID를 입력한 순서로 우선순위가 바뀌지 않습니다. 알려진 ID라도 이 조건 때문에 TC가 생성되지 않을 수 있으며, 선택된 TC가 없으면 suite 없는 정상 번들을 만들고 `readiness`는 `empty`와 종료 코드 2를 반환합니다. 한 묶음에 여러 프로필 규칙이 적용되면 기존처럼 여러 TC를 생성할 수 있습니다.
+
+전체 오류 묶음·원본 해시·수집 범위는 보존합니다. 요청한 ID는 정렬·중복 제거해 `analysis.groupFilter.groupIds`에 기록하고 분석 해시로 보호하며, 보고서에도 선택 범위를 남깁니다. 비교와 이전 분석 기준의 건수는 전체 묶음을 계속 사용합니다. 맥락 질문과 검토 조건도 유지합니다. `--group`을 생략하면 기존 선택 방식이며, 다른 명령에서는 거부합니다. API는 `analyzeErrors(content, { groupIds: [groupId] })`와 `analyzeWithBaseline()`의 같은 옵션입니다. 비어 있지 않은 최대 100개 항목 배열을 받으며 입력 배열을 변경하지 않습니다.
+
 `report.md` 상단에서 TC 초안 수와 추가 정보가 필요한 TC 수를 확인할 수 있습니다. 초안도 실행 전에 검토해야 합니다. 오류 묶음·수집 건수와 함께 대표 로그의 오류·React 컴포넌트 스택, 재현 방법·사전 조건·테스트 단계·부족한 정보도 표시합니다. 같은 스택은 한 번만 표시하며, 전체 로그의 모든 스택을 나열하지는 않습니다. 재현 단계와 정상 기대 결과, 명시적인 assertion이 없으면 질문이 있는 TC를 생성합니다. 직접 입력한 보고서에는 실제 발생 시각·사용자 수를 만들어 넣지 않습니다. 수집 건수도 실제 발생률을 뜻하지 않으며, 원본 내보내기의 일부 데이터 표시를 유지합니다.
 
 기본 suite는 검토 질문으로 실행이 차단됩니다. TC와 프로필을 확인한 뒤 다른 출력 폴더에 `--reviewed`로 다시 생성하면 검토 질문만 제거됩니다. 나머지 질문은 그대로 실행을 차단합니다. 프로필의 `setupConfirmed`는 준비 조건을 확인했다는 표시이며, 계정·데이터를 자동으로 준비하는 기능은 아닙니다.
