@@ -11,6 +11,7 @@ import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
 import { readRunSummary, renderRunSummary } from './run-summary.ts';
 import { readReadiness, renderReadiness } from './readiness.ts';
+import { refineBundle } from './refinement.ts';
 import type { Analysis, EventType, Runtime } from './types.ts';
 
 const help = `Error to Test — local error analysis and regression TC drafts
@@ -25,6 +26,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test verify new-directory [--input errors-1.json --input errors-2.json] [--profile profile.json]
   error-to-test init-profile new-directory --out profile.json
   error-to-test init-profile new-directory --profile existing.json --out extended.json
+  error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md]
   error-to-test readiness new-directory [--format text|json]
@@ -38,6 +40,7 @@ Options:
   --format text|json      Compare format (default: text Markdown)
   --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
+  --profile FILE         Replacement profile for the bundle's previously selected groups (refine; required)
   --baseline DIRECTORY   Select only signatures absent from this verified bundle, before --min-count and --top; retain all groups in analysis.json (analyze only)
   --project NAME         Metadata for a manual report
   --environment NAME    Metadata for a manual report
@@ -54,6 +57,7 @@ Options:
   --group GROUP_ID       Select TCs only for these exact current group IDs; repeat up to 100 times (analyze only; before --min-count/--top)
   --top N                Generate TCs for the first N eligible ranked groups (1..100; after --min-count)
   --out DIRECTORY        New analyze directory; existing files are never overwritten
+  --out DIRECTORY        New refine directory outside the source bundle (required; review defaults to pending)
   --out FILE             New init-profile JSON file; existing files are never overwritten
   --out FILE             New results summary file; existing files are never overwritten
   --out FILE             New comparison file; existing files are never overwritten
@@ -133,6 +137,11 @@ function insideBundleResults(bundleRoot: string, path: string): boolean {
   return rest.split(sep, 1)[0]?.toLowerCase() === 'results';
 }
 
+function insideBundle(bundleRoot: string, path: string): boolean {
+  const rest = relative(bundleRoot.toLowerCase(), path.toLowerCase());
+  return rest === '' || (rest !== '..' && !rest.startsWith(`..${sep}`) && !isAbsolute(rest));
+}
+
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
@@ -149,11 +158,23 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, verify, link-run, results, compare, or readiness. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, verify, link-run, results, compare, or readiness. See --help.');
     process.stdout.write(help);
     return;
   }
   const command = positionals[0];
+  if (command === 'refine') {
+    if (positionals.length !== 2 || !positionals[1]?.trim() || !values.profile?.trim() || !values.out?.trim()) throw new Error('refine requires one bundle directory, --profile FILE, and --out DIRECTORY.');
+    if (Object.keys(values).some(key => !['profile', 'out', 'reviewed', 'help'].includes(key))) throw new Error('Unsupported option for refine. Use only --profile FILE, --out DIRECTORY, and --reviewed.');
+    const bundle = resolve(positionals[1]);
+    const out = resolve(values.out);
+    if (insideBundle(await realpath(bundle), await canonicalOutput(out))) throw new Error('The refined output must be outside the source bundle. Choose a new --out DIRECTORY path.');
+    const analysis = await refineBundle(bundle, await readBoundedFile(resolve(values.profile), 1024 * 1024));
+    const files = await writeBundle(out, analysis, { reviewed: values.reviewed });
+    const drafts = analysis.candidates.filter(candidate => candidate.state === 'draft').length;
+    process.stdout.write(`${analysis.groups.length} error groups retained; ${analysis.candidates.length} refined TC candidates (${drafts} drafts, ${analysis.candidates.length - drafts} need context).\nReview ${resolve(out, 'report.md')}\n${files.length} artifacts written. Review acknowledgment: ${values.reviewed ? 'yes' : 'pending'}. Original input was not rechecked.\n`);
+    return;
+  }
   if (command === 'init-profile') {
     if (positionals.length !== 2 || !positionals[1] || !values.out) throw new Error('init-profile requires one bundle directory and --out FILE.');
     if (Object.keys(values).some(key => !['out', 'profile', 'help'].includes(key))) throw new Error('Unsupported option for init-profile. Use only --profile FILE and --out FILE.');
@@ -284,7 +305,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, verify, link-run, results, compare, or readiness. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, verify, link-run, results, compare, or readiness. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');

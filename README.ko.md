@@ -188,6 +188,25 @@ TC 생성과 동일하게 모든 조건을 함께 검사해 기존 규칙이 적
 
 API는 `createProfileTemplate(analysis, { profile: existingProfile })`입니다. JSON 값만으로 구성한 객체 또는 BOM 하나를 지원하는 JSON 문자열을 1 MiB까지 받으며 입력 객체를 변경하지 않습니다. 객체의 선택 필드가 `undefined`이면 해당 속성을 생략하세요. `profile`을 생략하면 기존 빈 템플릿을 만듭니다.
 
+프로필을 보완한 뒤에는 **원본 로그 없이 기존 번들에서 TC를 다시 생성**할 수 있습니다.
+
+```sh
+error-to-test refine ./initial-analysis --profile ./review-profile.json --out ./refined
+error-to-test readiness ./refined
+# 새 프로필과 TC를 검토한 뒤 별도 새 번들에 검토 확인
+error-to-test refine ./initial-analysis --profile ./review-profile.json --reviewed --out ./refined-reviewed
+```
+
+기존에 실제 TC로 선택됐던 묶음만 저장된 순서대로 재생성합니다. 넓은 프로필 규칙도 이전에 제외된 묶음을 새로 선택하지 않으며, 선택된 한 묶음에 여러 규칙이 적용되면 여러 TC를 만들 수 있습니다. 전체 오류 묶음·원본 해시와 입력 파일 목록·수집 범위·이전 분석 기준과 그룹 선택 정보는 보존합니다. 선택 범위나 원본 메타데이터·필터·순위를 바꾸려면 원본 입력으로 `analyze`를 다시 실행하세요.
+
+새 프로필로 전체를 교체하며 기존 프로필과 병합하지 않습니다. 1 MiB 제한과 BOM 하나 지원을 유지하고 정확한 프로필 바이트를 새 해시에 반영합니다. 검증된 원본 번들은 한 번 읽으며, `analysis.refinement`에 직전 분석·suite·프로필 해시와 기존 선택 묶음 ID를 기록합니다. 반복 재생성 시 이 항목은 직전 번들 기준으로 교체합니다.
+
+대표 로그 5개 밖에서 확인된 질문과 충돌도 저장된 전체 묶음 맥락을 통해 계속 차단합니다. 이 맥락이 없는 오래된 번들, 선택된 TC가 없는 번들, 변경된 산출물, 잘못된 프로필은 거부합니다. 저장된 전체 맥락이 없으면 원본 로그로 다시 분석해야 합니다. `--reviewed`도 미해결 질문을 제거하지 않으며, 기존 번들이 검토됐어도 새 번들은 기본적으로 검토 대기입니다.
+
+출력은 원본 번들 전체의 바깥에 있는 새 디렉터리여야 하며 경로 별칭도 검사합니다. 원본 산출물과 연결 실행 결과는 수정하지 않고, 과거 실행 결과도 새 번들에 복사하지 않습니다. 원본 입력 바이트를 다시 확인하는 기능은 아니므로 원본이 있으면 `verify ./refined --input ... --profile ./review-profile.json`로 별도 검증하세요. `--profile`·`--out`은 필수이며 분석 필터나 그룹 선택 옵션은 받지 않습니다. 브라우저 실행이나 원본 오류의 수정 완료 처리는 수행하지 않습니다.
+
+API는 `await refineBundle(directory, profileJsonText)`입니다. JSON 문자열을 받아 새 `Analysis`를 반환하며 파일 저장·검토 승인·종료 코드 변경은 하지 않습니다. 저장하려면 별도 새 경로에 `writeBundle()`을 호출하세요.
+
 ```sh
 node bin/error-to-test.mjs verify .error-to-test/example --input examples/errors.json --profile examples/profile.json
 node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --reviewed --out .error-to-test/reviewed

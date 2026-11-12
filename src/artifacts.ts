@@ -31,6 +31,14 @@ export function renderReport(analysis: Analysis): string {
     'The source SHA-256 commits to the ordered file hashes and byte lengths. Verify with every original file in the same order.',
     ...analysis.source.inputs.map((input, index) => `${index + 1}. SHA-256: ${input.sha256} · Bytes: ${input.byteLength}`),
   ].join('\n')), '');
+  if (analysis.refinement) lines.push('## Profile refinement', '', literal([
+    `Source analysis SHA-256: ${analysis.refinement.sourceAnalysisSha256}`,
+    ...(analysis.refinement.sourceSuiteSha256 ? [`Source suite SHA-256: ${analysis.refinement.sourceSuiteSha256}`] : []),
+    ...(analysis.refinement.sourceProfileSha256 ? [`Source profile SHA-256: ${analysis.refinement.sourceProfileSha256}`] : []),
+    `Previously selected group IDs: ${analysis.refinement.selectedGroupIds.join(', ')}`,
+    'TCs were regenerated from the verified saved groups and a replacement profile. Original input was not rechecked; selection and source coverage were not expanded.',
+    'The new bundle has its own review acknowledgement and suite. Linked run results were not transferred.',
+  ].join('\n')), '');
   if (analysis.groupFilter) lines.push('## Explicit group selection', '', literal([
     `Requested group IDs: ${analysis.groupFilter.groupIds.join(', ')}`,
     'TCs are selected from these exact current groups, intersected with any baseline selection, before min-count and top. Input ID order does not change ranking.',

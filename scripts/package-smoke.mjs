@@ -101,6 +101,30 @@ try {
   assert.equal(readySummary.status, 'ready');
   assert.equal(readySummary.counts.ready, 2);
   assert.ok(readySummary.cases.every(test => test.blockers.length === 0));
+  const replacementProfileFile = join(temp, 'replacement-profile.json');
+  const replacementProfile = JSON.parse(JSON.stringify(expanded));
+  replacementProfile.name = 'Confirmed replacement profile';
+  replacementProfile.scenarios[0].requirement = 'The missing item displays the reviewed empty state';
+  const replacementProfileText = '\uFEFF' + JSON.stringify(replacementProfile);
+  await writeFile(replacementProfileFile, replacementProfileText);
+  const refinedFromBundle = join(temp, 'refined-from-bundle');
+  runCli(['refine', executionReady, '--profile', replacementProfileFile, '--out', refinedFromBundle]);
+  const refinedAnalysis = JSON.parse(await readFile(join(refinedFromBundle, 'analysis.json'), 'utf8'));
+  const sourceAnalysis = JSON.parse(await readFile(join(executionReady, 'analysis.json'), 'utf8'));
+  const sourceProvenance = JSON.parse(await readFile(join(executionReady, 'provenance.json'), 'utf8'));
+  assert.deepEqual(refinedAnalysis.groups, sourceAnalysis.groups);
+  assert.deepEqual(refinedAnalysis.coverage, sourceAnalysis.coverage);
+  assert.equal(refinedAnalysis.source.sha256, sourceAnalysis.source.sha256);
+  assert.notEqual(refinedAnalysis.source.profileSha256, sourceAnalysis.source.profileSha256);
+  assert.equal(refinedAnalysis.refinement.sourceAnalysisSha256, sourceProvenance.analysisSha256);
+  assert.equal(refinedAnalysis.refinement.sourceProfileSha256, sourceProvenance.profileSha256);
+  assert.equal(refinedAnalysis.candidates.length, 2);
+  const refinementReadiness = readinessCli([refinedFromBundle, '--format', 'json']);
+  assert.equal(refinementReadiness.status, 2, refinementReadiness.stderr);
+  assert.equal(JSON.parse(refinementReadiness.stdout).reviewed, false);
+  assert.match(runCli(['verify', refinedFromBundle, '--input', extensionInput, '--profile', replacementProfileFile]), /original input: checked/);
+  await writeFile(join(temp, 'refinement-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readFile} from 'node:fs/promises';\nimport {refineBundle} from '@ihyeon/error-to-test';\nconst [source,profile,output]=process.argv.slice(2);\nassert.deepEqual(await refineBundle(source,await readFile(profile,'utf8')),JSON.parse(await readFile(output+'/analysis.json','utf8')));\n`);
+  execFileSync(process.execPath, ['refinement-consumer.mjs', executionReady, replacementProfileFile, refinedFromBundle], { cwd: temp, stdio: 'pipe' });
   const noCandidates = join(temp, 'no-candidates');
   runCli(['analyze', '--input', extensionInput, '--format', 'jsonl', '--min-count', '2', '--out', noCandidates]);
   const emptyReadiness = readinessCli([noCandidates, '--format', 'json']);
@@ -272,5 +296,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI group selection/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI refinement/group selection/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

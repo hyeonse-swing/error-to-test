@@ -127,6 +127,12 @@ export interface Analysis {
     excludedGroupCount: number;
   };
   groupFilter?: { groupIds: string[] };
+  refinement?: {
+    sourceAnalysisSha256: string;
+    sourceSuiteSha256?: string;
+    sourceProfileSha256?: string;
+    selectedGroupIds: string[];
+  };
 }
 export interface FlowQaSuite {
   schemaVersion: 'flow-qa/suite-1';

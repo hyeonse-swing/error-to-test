@@ -233,6 +233,40 @@ New templates retain blank expectation fields, `setupConfirmed: false`, and the 
 
 The API is `createProfileTemplate(analysis, { profile: existingProfile })`; `profile` accepts an object containing only JSON values or a JSON string, including one leading BOM, within 1 MiB. Omit undefined optional properties from object inputs. The function does not mutate either input. Without `profile`, it produces the original blank template.
 
+### Apply a new profile without the original logs
+
+`refine` regenerates TC candidates from a verified saved bundle and a replacement profile. It is useful after editing a generated profile when the original log files are no longer available:
+
+```sh
+error-to-test init-profile ./initial-analysis --out ./review-profile.json
+# Fill confirmed requirements, setup, actions, and assertions in review-profile.json.
+error-to-test refine ./initial-analysis --profile ./review-profile.json --out ./refined
+error-to-test readiness ./refined
+# After reviewing the replacement profile and cases, write another new bundle:
+error-to-test refine ./initial-analysis --profile ./review-profile.json --reviewed --out ./refined-reviewed
+```
+
+Only groups represented by the source bundle's selected candidates are regenerated, in their saved order. Broad profile rules cannot add previously excluded groups; several matching rules can create several cases for a selected group. All observed groups, source fingerprints, coverage, and baseline/group selection metadata are preserved. To change the selected groups, original metadata, filters, or ranking, run `analyze` again with the original input.
+
+The replacement profile is parsed as a complete profile, not merged with the old one. Its exact bytes, including one optional leading BOM, determine the new profile hash; the 1 MiB profile limit applies. The source is read once as a verified snapshot. `analysis.refinement` records the immediate source analysis/suite/profile hashes and previously selected group IDs; repeated refinement replaces this lineage entry rather than embedding history.
+
+Saved full-group context questions and conflicts remain blockers even when they came from records outside the five representative samples. Bundles without complete saved group context, empty selections, changed artifacts, invalid profiles, or unsupported data are rejected. Reanalyze original logs to upgrade older bundles missing that context. No source defect is marked resolved and no browser is executed.
+
+The output must be a new directory outside the entire source bundle, including path aliases; source artifacts and linked results remain untouched. Linked runs are not copied. Review acknowledgement defaults to pending even if the old bundle was reviewed. `--reviewed` only acknowledges the new review and does not clear missing context.
+
+Original input bytes are not rechecked by `refine`; retained fingerprints describe the supplied saved analysis. If originals are available, use `verify ./refined --input ... --profile ./review-profile.json` to check them separately. The command requires `--profile` and `--out`; analyze-only filters and selection options are not accepted.
+
+```js
+import { readFile } from 'node:fs/promises';
+import { refineBundle, writeBundle } from '@ihyeon/error-to-test';
+
+const profileText = await readFile('./review-profile.json', 'utf8');
+const analysis = await refineBundle('./initial-analysis', profileText);
+await writeBundle('./refined', analysis); // Review remains pending by default.
+```
+
+`refineBundle(directory, profileText)` accepts JSON text and returns a new `Analysis`. It does not write files, approve cases, or change process exit codes. Use a separate new output directory when writing the result.
+
 ## Review and use Flow QA
 
 Generated files (Flow QA source is limited to 128 KB; suite JSON to 512 KiB):
