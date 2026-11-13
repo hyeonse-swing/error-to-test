@@ -163,6 +163,29 @@ try {
   assert.equal(summary.counts.blocked, 1);
   assert.equal(summary.counts.failed, 0);
   assert.ok(!summaryText.includes('demo-private'));
+  const resultGate = args => spawnSync(join(temp, 'node_modules/.bin/error-to-test'), ['results', ...args], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  const failedResults = resultGate([reviewed, '--fail-on', 'error', '--fail-on', 'blocked', '--fail-on', 'blocked', '--format', 'json']);
+  assert.equal(failedResults.status, 2, failedResults.stderr);
+  assert.equal(failedResults.stdout, summaryText);
+  assert.equal(failedResults.stderr, 'Results gate failed: 1 cases match --fail-on (blocked=1, error=0).\n');
+  const passedResults = resultGate([reviewed, '--fail-on', 'failed', '--format', 'json']);
+  assert.equal(passedResults.status, 0, passedResults.stderr);
+  assert.equal(passedResults.stdout, summaryText);
+  assert.equal(passedResults.stderr, 'Results gate passed: 0 cases match --fail-on (failed=0).\n');
+  const resultGateFile = join(temp, 'failed-result-gate.md');
+  const savedResults = resultGate([reviewed, '--fail-on', 'blocked', '--out', resultGateFile]);
+  assert.equal(savedResults.status, 2, savedResults.stderr);
+  const savedResultText = await readFile(resultGateFile, 'utf8');
+  assert.equal(savedResultText, runCli(['results', reviewed]));
+  assert.equal((await stat(resultGateFile)).mode & 0o777, 0o600);
+  const overwrittenResults = resultGate([reviewed, '--fail-on', 'blocked', '--out', resultGateFile]);
+  assert.equal(overwrittenResults.status, 1);
+  assert.ok(!overwrittenResults.stderr.includes('Results gate'));
+  assert.equal(await readFile(resultGateFile, 'utf8'), savedResultText);
+  const emptyResultsGate = resultGate([noCandidates, '--fail-on', 'failed', '--format', 'json']);
+  assert.equal(emptyResultsGate.status, 2, emptyResultsGate.stderr);
+  assert.equal(emptyResultsGate.stderr, 'Results gate failed: no selected cases.\n');
+  assert.equal(JSON.parse(emptyResultsGate.stdout).schemaVersion, 'error-to-test/run-summary-1');
   await writeFile(join(temp, 'summary-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readRunSummary,renderRunSummary} from '@ihyeon/error-to-test';\nconst summary=await readRunSummary(process.argv[2]);\nassert.equal(summary.runCount,2);\nassert.equal(summary.counts.blocked,1);\nassert.ok(renderRunSummary(summary).includes(summary.latestRun.runId));\n`);
   execFileSync(process.execPath, ['summary-consumer.mjs', reviewed], { cwd: temp, stdio: 'pipe' });
   assert.match(runCli(['verify', reviewed, '--input', errorFile, '--profile', profileFile]), /original input: checked/);
@@ -296,5 +319,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI refinement/group selection/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI results CI gate/refinement/group selection/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

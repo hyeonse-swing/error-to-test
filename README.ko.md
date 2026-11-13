@@ -256,6 +256,27 @@ error-to-test results .error-to-test/reviewed --format json --out ./run-summary.
 
 API에서는 `await readRunSummary(directory)`로 같은 데이터를 읽고 `renderRunSummary(summary)`로 Markdown을 만듭니다.
 
+CI에서는 `results --fail-on`으로 **최신 연결 실행의 TC 상태에 따라 실패 여부**를 정할 수 있습니다.
+
+```sh
+error-to-test results ./analysis --fail-on failed --fail-on error
+error-to-test results ./analysis --fail-on failed --fail-on error --fail-on not-run --format json --out ./ci-results.json
+```
+
+`failed`·`flaky`·`blocked`·`skipped`·`error`·`not-run` 중 정확한 값을 반복 지정합니다. 중복은 한 번만 처리하고 입력 순서와 무관하게 같은 정책을 적용합니다. 쉼표로 합친 값이나 `passed`, 실행 전체 상태인 `interrupted` 등은 번들을 읽기 전에 거부합니다.
+
+| 종료 코드 | `--fail-on` 사용 시 의미 |
+| --- | --- |
+| `0` | 선택된 TC가 하나 이상이고 지정한 상태에 해당하는 TC가 없음 |
+| `1` | 잘못된 옵션·잘못되거나 변경된 번들/결과·출력 오류 |
+| `2` | 지정한 상태의 TC가 있거나 선택된 TC가 없음 |
+
+전체 보고서를 출력하거나 저장한 뒤 0 또는 2를 반환하고 숫자로 된 판정 요약은 stderr에 씁니다. JSON stdout은 기존 `error-to-test/run-summary-1` 형식이며 판정 필드를 추가하지 않습니다. 출력 오류는 판정 요약 없이 코드 1로 처리하고 기존 파일은 보존합니다.
+
+최신 실행 하나의 TC 결과만 평가하며 과거 실패를 합치거나 실행 전체 상태를 별도 조건으로 삼지 않습니다. 연결 실행이 없으면 선택된 TC는 `not-run`이므로 미실행도 실패시킬 때 이 값을 지정하세요. 지정하지 않은 상태는 실패 조건이 아니지만, 선택된 TC가 없는 결과는 항상 코드 2입니다. 검토 대기와 미해결 맥락은 실행 전 `readiness`로 별도 점검하세요. 정책 통과는 검토 승인·브라우저 실행 증명·원본 오류 수정 완료를 의미하지 않습니다.
+
+옵션을 생략하면 기존 결과 조회 동작과 종료 코드를 유지합니다. `results`에서만 사용할 수 있고 API·저장 요약 형식은 바뀌지 않습니다. API에서는 `readRunSummary()`가 반환한 `counts`로 정책을 적용할 수 있습니다.
+
 직접 입력은 문자열, 텍스트 파일, 표준 입력, `error-to-test/manual-1` JSON을 지원합니다. 파일 구조는 [수동 오류 예제](examples/manual.json), 정상 기대 동작과 단계 연결은 [프로필 예제](examples/profile.json)를 참고하세요. 전체 옵션은 `node bin/error-to-test.mjs --help`로 확인할 수 있습니다.
 
 알려진 자격증명·이메일·URL 인증/쿼리 정보는 결과에서 정제합니다. 민감정보가 포함된 실행 단계나 기대 결과는 변경해 통과시키지 않고 질문으로 남깁니다. 모든 개인정보를 제거한다고 보장하지 않으므로 실제 업무 데이터를 입력하기 전에는 별도로 정제하세요. 비공개 오류는 셸 기록에 남는 인자 대신 파일·표준 입력을 사용하세요.

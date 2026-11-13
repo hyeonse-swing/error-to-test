@@ -366,6 +366,29 @@ console.log(summary.counts);
 console.log(renderRunSummary(summary));
 ```
 
+### Fail CI on selected case outcomes
+
+Use repeatable `--fail-on` with `results` to apply a policy to the latest linked run's case counts:
+
+```sh
+error-to-test results ./analysis --fail-on failed --fail-on error
+error-to-test results ./analysis --fail-on failed --fail-on error --fail-on not-run --format json --out ./ci-results.json
+```
+
+Choose exact values from `failed`, `flaky`, `blocked`, `skipped`, `error`, and `not-run`. Duplicates are counted once; option order does not change the policy or summary. Comma-separated values, `passed`, and run-level statuses such as `interrupted` are rejected before reading the bundle.
+
+| Exit code | Meaning with `--fail-on` |
+| --- | --- |
+| `0` | At least one selected case, and none have a chosen outcome |
+| `1` | Invalid options, invalid or changed bundle/result, or output error |
+| `2` | A chosen outcome exists, or no cases were selected |
+
+The full existing Markdown/JSON report is output or saved before returning `0` or `2`. A numeric gate summary goes to stderr; JSON stdout remains `error-to-test/run-summary-1` without gate fields. Output errors take precedence and produce exit `1` without a gate outcome; existing output files and bundle results are preserved.
+
+Only the case outcomes from the one latest linked run are evaluated. Historical failures are not combined with newer results, and the overall run status is not a separate gate condition. Without a linked run, selected cases are `not-run`: include `--fail-on not-run` if unexecuted cases should fail. A status you did not choose does not fail the gate, but an empty selection always does. Use `readiness` separately to check recorded context/review blockers before execution. Passing this policy does not approve cases, prove a browser ran, or resolve source errors.
+
+Omitting `--fail-on` preserves the existing results behavior and exit codes. The option is results-only; APIs and saved summary schemas are unchanged. API callers can apply their own policy to the `counts` returned by `await readRunSummary(directory)`.
+
 ## Data handling and checks
 
 Known credential assignments, bearer/recognized token formats, email addresses, and URL userinfo/query/fragment are removed before artifacts. Sensitive execution steps are omitted and block the case rather than silently changing its assertion. This is best-effort redaction, not a guarantee of complete anonymization; remove private application data before submitting it. Use files/stdin for private reports to avoid shell history. Logs are source data, not instructions. No external URL from a log becomes an execution target automatically.

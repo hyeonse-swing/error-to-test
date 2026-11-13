@@ -28,7 +28,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test init-profile new-directory --profile existing.json --out extended.json
   error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
   error-to-test link-run new-directory --report path/to/qa-report.json
-  error-to-test results new-directory [--format text|json] [--out summary.md]
+  error-to-test results new-directory [--format text|json] [--out summary.md] [--fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
@@ -37,6 +37,7 @@ Options:
   --error TEXT           Submit a single error directly; remaining lines are its stack
   --format auto|json|jsonl|text Analyze input format; JSONL requires explicit selection and one record per line; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
+  --fail-on STATUS        Results gate: failed|flaky|blocked|skipped|error|not-run (repeatable; exit 2 on a match or no selected cases, 1 on error)
   --format text|json      Compare format (default: text Markdown)
   --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
@@ -100,6 +101,8 @@ async function writeGateOutput(content: string): Promise<void> {
     });
   });
 }
+const resultsGateStatuses = ['failed', 'flaky', 'blocked', 'skipped', 'error', 'not-run'] as const;
+type ResultsGateStatus = typeof resultsGateStatuses[number];
 async function inputContents(paths: string[], allowStdin: boolean): Promise<string | readonly string[]> {
   if (paths.length < 1 || paths.length > 50) throw new Error('Provide between 1 and 50 --input files.');
   if (paths.some(path => !path.trim())) throw new Error('--input requires a nonempty file path.');
@@ -147,7 +150,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -212,15 +215,33 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command === 'results') {
     if (positionals.length !== 2 || !positionals[1]) throw new Error('results requires one bundle directory.');
-    if (Object.keys(values).some(key => !['format', 'out', 'help'].includes(key))) throw new Error('Unsupported option for results. Use only --format text|json and --out FILE.');
+    if (Object.keys(values).some(key => !['format', 'out', 'fail-on', 'help'].includes(key))) throw new Error('Unsupported option for results. Use only --format text|json, --out FILE, and --fail-on STATUS.');
     const format = values.format ?? 'text';
     if (format !== 'text' && format !== 'json') throw new Error('results --format must be text or json.');
+    const requestedStatuses = values['fail-on'];
+    if (requestedStatuses?.some(status => !resultsGateStatuses.includes(status as ResultsGateStatus))) {
+      throw new Error('results --fail-on must be failed, flaky, blocked, skipped, error, or not-run.');
+    }
+    const failOn = requestedStatuses === undefined ? undefined : resultsGateStatuses.filter(status => requestedStatuses.includes(status));
     const bundle = resolve(positionals[1]);
     const summary = await readRunSummary(bundle);
     const content = format === 'json' ? jsonText(summary) : renderRunSummary(summary);
     if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The results summary exceeds 64 MiB. Narrow the bundle before requesting output.');
+    const finishGate = () => {
+      if (failOn === undefined) return;
+      const selectedTotal = Object.values(summary.counts).reduce((total, count) => total + count, 0);
+      const matchTotal = failOn.reduce((total, status) => total + summary.counts[status], 0);
+      const failed = selectedTotal === 0 || matchTotal > 0;
+      const detail = failOn.map(status => `${status}=${summary.counts[status]}`).join(', ');
+      process.stderr.write(selectedTotal === 0
+        ? 'Results gate failed: no selected cases.\n'
+        : `Results gate ${failed ? 'failed' : 'passed'}: ${matchTotal} cases match --fail-on (${detail}).\n`);
+      if (failed) process.exitCode = 2;
+    };
     if (values.out === undefined) {
-      process.stdout.write(content);
+      if (failOn === undefined) process.stdout.write(content);
+      else await writeGateOutput(content);
+      finishGate();
       return;
     }
     const out = resolve(values.out);
@@ -233,7 +254,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output file already exists. Choose a new --out FILE path.');
       throw error;
     }
-    process.stdout.write(`Results summary written: ${out}\n`);
+    const written = `Results summary written: ${out}\n`;
+    if (failOn === undefined) process.stdout.write(written);
+    else await writeGateOutput(written);
+    finishGate();
     return;
   }
   if (command === 'readiness') {
@@ -307,6 +331,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, verify, link-run, results, compare, or readiness. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
+  if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
   if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
