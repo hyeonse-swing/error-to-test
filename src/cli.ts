@@ -12,6 +12,7 @@ import { linkFlowQaReport } from './results.ts';
 import { readRunSummary, renderRunSummary } from './run-summary.ts';
 import { readReadiness, renderReadiness } from './readiness.ts';
 import { refineBundle } from './refinement.ts';
+import { readIssueReport } from './issue-report.ts';
 import type { Analysis, EventType, Runtime } from './types.ts';
 
 const help = `Error to Test — local error analysis and regression TC drafts
@@ -27,6 +28,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test init-profile new-directory --out profile.json
   error-to-test init-profile new-directory --profile existing.json --out extended.json
   error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
+  error-to-test issue new-directory --group GROUP_ID [--out issue.md]
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md] [--fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
@@ -55,11 +57,12 @@ Options:
   --expected-source TEXT Expected-result source (--error only)
   --from ISO --to ISO    Filter observed timestamps; undated reports are excluded
   --min-count N          Select groups with at least N records after dedup/date filtering (1..10000)
-  --group GROUP_ID       Select TCs only for these exact current group IDs; repeat up to 100 times (analyze only; before --min-count/--top)
+  --group GROUP_ID       Analyze: select exact groups before min-count/top (repeat up to 100 times); issue: export exactly one group
   --top N                Generate TCs for the first N eligible ranked groups (1..100; after --min-count)
   --out DIRECTORY        New analyze directory; existing files are never overwritten
   --out DIRECTORY        New refine directory outside the source bundle (required; review defaults to pending)
   --out FILE             New init-profile JSON file; existing files are never overwritten
+  --out FILE             New issue Markdown file outside the source bundle; no remote issue is filed
   --out FILE             New results summary file; existing files are never overwritten
   --out FILE             New comparison file; existing files are never overwritten
   --max-new N            Compare only: allow 0..10000 only-current signatures; exit 0 within limit, 2 over limit, 1 on error
@@ -161,11 +164,32 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, verify, link-run, results, compare, or readiness. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, link-run, results, compare, or readiness. See --help.');
     process.stdout.write(help);
     return;
   }
   const command = positionals[0];
+  if (command === 'issue') {
+    if (positionals.length !== 2 || !positionals[1]?.trim() || values.group?.length !== 1) throw new Error('issue requires one bundle directory and exactly one --group GROUP_ID.');
+    if (Object.keys(values).some(key => !['group', 'out', 'help'].includes(key))) throw new Error('Unsupported option for issue. Use only --group GROUP_ID and --out FILE.');
+    if (values.out !== undefined && !values.out.trim()) throw new Error('--out requires a nonempty file path.');
+    const bundle = resolve(positionals[1]);
+    const out = values.out === undefined ? undefined : resolve(values.out);
+    if (out !== undefined && insideBundle(await realpath(bundle), await canonicalOutput(out))) throw new Error('The issue report must be written outside the source bundle. Choose a new --out FILE path.');
+    const content = await readIssueReport(bundle, values.group[0]!);
+    if (out === undefined) {
+      await writeGateOutput(content);
+      return;
+    }
+    await mkdir(dirname(out), { recursive: true });
+    try { await writeFile(out, content, { flag: 'wx', mode: 0o600 }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output file already exists. Choose a new --out FILE path.');
+      throw error;
+    }
+    await writeGateOutput(`Issue report written: ${out}\n`);
+    return;
+  }
   if (command === 'refine') {
     if (positionals.length !== 2 || !positionals[1]?.trim() || !values.profile?.trim() || !values.out?.trim()) throw new Error('refine requires one bundle directory, --profile FILE, and --out DIRECTORY.');
     if (Object.keys(values).some(key => !['profile', 'out', 'reviewed', 'help'].includes(key))) throw new Error('Unsupported option for refine. Use only --profile FILE, --out DIRECTORY, and --reviewed.');
@@ -329,7 +353,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, verify, link-run, results, compare, or readiness. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, link-run, results, compare, or readiness. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
   if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');

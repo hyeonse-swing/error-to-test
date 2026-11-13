@@ -120,6 +120,7 @@ export async function readBoundedFile(path: string, maxBytes = 10 * 1024 * 1024)
 export async function readVerifiedBundle(directory: string, options: { input?: string | readonly string[]; profile?: string } = {}): Promise<{
   analysis: Record<string, unknown>;
   provenance: Record<string, unknown>;
+  report: string;
   suite?: Record<string, unknown>;
   verification: { suite: boolean; reviewed: boolean; sourceChecked: boolean };
 }> {
@@ -167,7 +168,7 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
     if (!sameFiles || provided.sha256 !== text(provenance.inputSha256, 'provenance.inputSha256')) throw new Error('STALE_BUNDLE: Input changed since analysis. Supply every original file in the same order.');
   }
   if (options.profile !== undefined && hash(options.profile) !== provenance.profileSha256) throw new Error('STALE_BUNDLE: Profile changed since analysis.');
-  return { analysis, provenance, ...(verifiedSuite === undefined ? {} : { suite: verifiedSuite }), verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
+  return { analysis, provenance, report, ...(verifiedSuite === undefined ? {} : { suite: verifiedSuite }), verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
 }
 export async function verifyBundle(directory: string, options: { input?: string | readonly string[]; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
   return (await readVerifiedBundle(directory, options)).verification;

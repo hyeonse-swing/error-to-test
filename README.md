@@ -187,9 +187,35 @@ Repeat `--group` up to 100 times. Each ID must have the exact `group-` plus 16 l
 
 Requested groups are intersected with any `--baseline` selection, then `--min-count` and `--top` apply in the original ranked order. Argument order does not change priority. A known group can still be excluded by these conditions; zero selected cases creates a valid bundle without a suite, and `readiness` reports `empty` with exit `2`. A selected group may produce several profile-based TCs as before.
 
-The complete observed groups, input hashes, and source coverage remain in the new bundle. `analysis.groupFilter.groupIds` stores the sorted, deduplicated requested IDs, covered by the analysis hash, and the report records the scope. Comparison and baseline counts continue to use all observed groups. Missing-context and review questions still block execution. Omitting `--group` keeps the existing selection behavior; other commands reject this analyze-only option.
+The complete observed groups, input hashes, and source coverage remain in the new bundle. `analysis.groupFilter.groupIds` stores the sorted, deduplicated requested IDs, covered by the analysis hash, and the report records the scope. Comparison and baseline counts continue to use all observed groups. Missing-context and review questions still block execution. Omitting `--group` keeps the existing selection behavior. The `issue` command also uses `--group` to identify one saved group for a report, without changing TC selection.
 
 The API accepts `analyzeErrors(content, { groupIds: [groupId], top: 10 })` and the same option in `analyzeWithBaseline()`. `groupIds` must be a nonempty array of at most 100 entries; it is not mutated.
+
+### Export one error group for an issue
+
+`issue` creates a local Markdown report for one exact group from a verified bundle:
+
+```sh
+# Replace the example ID with an actual ID from report.md or analysis.json.
+error-to-test issue ./analysis --group group-0123456789abcdef --out ./issue.md
+error-to-test issue ./analysis --group group-0123456789abcdef
+```
+
+The report includes the saved error details, representative stacks, and any selected TC candidates with their reproduction, expected behavior, and questions. Groups excluded from TC generation can also be exported; they are explicitly marked as having no selected TC candidates. Exactly one `--group` is required, and malformed or unknown IDs are rejected without generating a file.
+
+The original input/analysis/report hashes and available profile/suite hashes identify the verified snapshot. Source coverage and warnings describe the **whole original bundle**, not a per-group rate or complete collection. Only the requested group's detail section is copied; other groups' error contents and the original global selection sections are not included. Markdown fences are respected, so heading-like text inside captured logs cannot split the excerpt.
+
+This exports saved review material. It does not generate or approve cases, read linked results, execute tests, file a remote issue, or resolve an error. Original input bytes are not rechecked; use `verify --input ...` when originals are available. Use `readiness` to inspect current recorded execution blockers in the exported suite.
+
+Output defaults to stdout. `--out` writes an exclusive mode-0600 new file outside the entire source bundle, including path aliases; existing files and source artifacts are preserved. `issue` accepts only a bundle directory, one `--group`, and optional `--out`. Changed bundles, unsupported saved report layouts, and output errors exit `1`; successful export exits `0`.
+
+```js
+import { readIssueReport } from '@ihyeon/error-to-test';
+
+const markdown = await readIssueReport('./analysis', groupId);
+```
+
+The API returns Markdown from one verified snapshot and does not write files or send content anywhere.
 
 ## Confirm the intended behavior
 
