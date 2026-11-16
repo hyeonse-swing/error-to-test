@@ -3,7 +3,7 @@ import { hash, optionalText, parseWebSteps, record, strings, text } from './vali
 import { pagePath, redactText, safeUrl } from './redact.ts';
 
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
-const eventTypes = new Set(['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual']);
+const eventTypes = new Set(['javascript', 'promise', 'react', 'console', 'http', 'network', 'resource', 'manual']);
 const runtimes = new Set(['browser', 'webview-ios', 'webview-android', 'unknown']);
 
 function identifier(value: unknown, label: string): string {
@@ -128,7 +128,12 @@ function safeFacts(group: IssueGroup): string[] {
   const facts = [`${group.count} captured event(s); ${group.viewCount} view(s).`, `Observed ${group.type} error: ${redactText(group.message)}`, `Runtime: ${group.runtime}; environment: ${redactText(group.environment)}; release: ${redactText(group.release)}.`];
   if (group.pagePath) facts.push(`Observed page path: ${redactText(group.pagePath)}`);
   for (const event of group.evidence) {
-    if (event.network) facts.push(`Observed network response: ${event.network.method} ${safeUrl(event.network.url)}${event.network.status === undefined ? '' : ` (${event.network.status})`}.`);
+    if (event.network) {
+      const { method, url, status } = event.network;
+      facts.push(status !== undefined && status < 100
+        ? `Observed network outcome: ${method} ${safeUrl(url)} (HTTP status unavailable; recorded value: ${status}).`
+        : `Observed network response: ${method} ${safeUrl(url)}${status === undefined ? '' : ` (${status})`}.`);
+    }
     if (event.source === 'manual' && event.expected) facts.push(`Reporter-provided expected behavior: ${redactText(event.expected)}${event.expectedSource ? ` (source: ${redactText(event.expectedSource)})` : ' (source missing)'}.`);
   }
   if (group.context?.expected) facts.push(`Reporter-provided expected behavior: ${redactText(group.context.expected)}${group.context.expectedSource ? ` (source: ${redactText(group.context.expectedSource)})` : ' (source missing)'}.`);

@@ -1,4 +1,4 @@
-export type EventType = 'javascript' | 'promise' | 'react' | 'console' | 'http' | 'network' | 'manual';
+export type EventType = 'javascript' | 'promise' | 'react' | 'console' | 'http' | 'network' | 'resource' | 'manual';
 export type Runtime = 'browser' | 'webview-ios' | 'webview-android' | 'unknown';
 export type Locator = { by: 'role'; value: string; name?: string } | { by: 'text' | 'label' | 'testId'; value: string };
 export type WebStep =

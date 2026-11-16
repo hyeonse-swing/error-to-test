@@ -49,7 +49,7 @@ Options:
   --environment NAME    Metadata for a manual report
   --release NAME         Metadata for a manual report
   --page PATH            Page reported for a manual error
-  --type TYPE            javascript|promise|react|console|http|network|manual
+  --type TYPE            javascript|promise|react|console|http|network|resource|manual
   --runtime RUNTIME      browser|webview-ios|webview-android|unknown (manual input)
   --reproduce TEXT       Reported action (--error only; repeatable)
   --precondition TEXT    Reported setup (--error only; repeatable)
@@ -361,7 +361,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');
   const format = values.format ?? 'auto';
   if (format !== 'auto' && format !== 'json' && format !== 'jsonl' && format !== 'text') throw new Error('--format must be auto, json, jsonl, or text.');
-  const types = ['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual'];
+  const types = ['javascript', 'promise', 'react', 'console', 'http', 'network', 'resource', 'manual'];
   if (values.type !== undefined && !types.includes(values.type)) throw new Error('--type is not supported.');
   if (values.runtime !== undefined && !['browser', 'webview-ios', 'webview-android', 'unknown'].includes(values.runtime)) throw new Error('--runtime is not supported.');
   let content: string | readonly string[];

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { literal, readVerifiedBundle } from './artifacts.ts';
 import { redactText } from './redact.ts';
 import { record, text, timestamp } from './validation.ts';
+import { safeReportedTargetName, validateResultSelection, type LinkedSelection } from './result-selection.ts';
 
 export type LinkedRunStatus = 'passed' | 'failed' | 'blocked' | 'error' | 'interrupted';
 export type LinkedCaseStatus = 'passed' | 'failed' | 'flaky' | 'blocked' | 'skipped' | 'error';
@@ -14,7 +15,7 @@ export interface RunSummary {
   inputSha256: string;
   suiteSha256?: string;
   runCount: number;
-  latestRun?: { runId: string; status: LinkedRunStatus; startedAt: string; finishedAt: string };
+  latestRun?: { runId: string; status: LinkedRunStatus; startedAt: string; finishedAt: string; targetName?: string; selection?: LinkedSelection };
   counts: Record<DisplayCaseStatus, number>;
   groups: { groupId: string; message: string; cases: { caseId: string; candidateId: string; eventIds: string[]; status: DisplayCaseStatus; reason?: string }[] }[];
   warnings: string[];
@@ -94,7 +95,7 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
   let raw: Record<string, unknown>;
   try { raw = record(JSON.parse(content), `Linked result ${name}`); }
   catch { throw new Error(`Linked result ${name} is not a valid JSON object.`); }
-  exactKeys(raw, ['schemaVersion', 'runId', 'inputSha256', 'suiteSha256', 'startedAt', 'finishedAt', 'status', 'cases', 'note'], [], `Linked result ${name}`);
+  exactKeys(raw, ['schemaVersion', 'runId', 'inputSha256', 'suiteSha256', 'startedAt', 'finishedAt', 'status', 'cases', 'note'], ['targetName', 'selection'], `Linked result ${name}`);
   if (raw.schemaVersion !== 'error-to-test/results-1') throw new Error(`Linked result ${name} uses an unsupported schema.`);
   const runId = text(raw.runId, `${name}.runId`);
   if (!uuidPattern.test(runId) || `${runId}.json` !== name) throw new Error(`Linked result ${name} run ID does not match its filename.`);
@@ -107,7 +108,8 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
   const finishedAt = timestamp(raw.finishedAt, `${name}.finishedAt`);
   if (finishedAt < startedAt) throw new Error(`Linked result ${name} finished before it started.`);
   text(raw.note, `${name}.note`);
-  if (!Array.isArray(raw.cases) || raw.cases.length !== expected.size) throw new Error(`Linked result ${name} has an incomplete case list.`);
+  const targetName = raw.targetName === undefined ? undefined : safeReportedTargetName(raw.targetName, `${name}.targetName`);
+  if (!Array.isArray(raw.cases) || raw.cases.length > expected.size) throw new Error(`Linked result ${name} has an invalid case list.`);
   const seen = new Set<string>();
   const cases = raw.cases.map((item, index): LinkedCase => {
     const label = `${name}.cases[${index}]`;
@@ -125,11 +127,13 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
     const reason = entry.reason === undefined ? undefined : redactText(text(entry.reason, `${label}.reason`));
     return { ...mapping, eventIds: mapping.eventIds.map(redactText), status: caseStatus as LinkedCaseStatus, ...(reason === undefined ? {} : { reason }) };
   });
-  if (seen.size !== expected.size) throw new Error(`Linked result ${name} does not account for every exported case.`);
+  const selection = validateResultSelection(raw.selection, Object.hasOwn(raw, 'selection'),
+    cases.map(item => item.caseId), new Set(expected.keys()), 'Linked result');
   if (status === 'passed' && cases.some(item => item.status === 'failed' || item.status === 'error')) {
     throw new Error(`Linked result ${name} contradicts its case results.`);
   }
-  return { runId, status: status as LinkedRunStatus, startedAt, finishedAt, cases };
+  return { runId, status: status as LinkedRunStatus, startedAt, finishedAt,
+    ...(targetName === undefined ? {} : { targetName }), ...(selection === undefined ? {} : { selection }), cases };
 }
 
 function later(a: LinkedRun, b: LinkedRun): boolean {
@@ -218,6 +222,7 @@ export async function readRunSummary(directory: string): Promise<RunSummary> {
     });
   }
   const warnings = ['Counts are the latest reported case outcomes, not proof that any source issue is resolved.'];
+  if (latest?.selection) warnings.push(`Latest linked run selected ${latest.selection.selectedCaseIds.length} of ${latest.selection.totalCases} exported cases. Unselected cases are not-run even if an earlier run reported outcomes for them.`);
   if (analysis.warnings !== undefined) warnings.push(...stringList(analysis.warnings, 'analysis.warnings').map(redactText));
   if (runCount) {
     if (!verification.reviewed) warnings.push('Bundle review is pending. Reported results do not authorize execution.');
@@ -231,7 +236,9 @@ export async function readRunSummary(directory: string): Promise<RunSummary> {
   return {
     schemaVersion: 'error-to-test/run-summary-1', inputSha256,
     ...(suiteSha256 === undefined ? {} : { suiteSha256 }), runCount,
-    ...(latest === undefined ? {} : { latestRun: { runId: latest.runId, status: latest.status, startedAt: latest.startedAt, finishedAt: latest.finishedAt } }),
+    ...(latest === undefined ? {} : { latestRun: { runId: latest.runId, status: latest.status, startedAt: latest.startedAt, finishedAt: latest.finishedAt,
+      ...(latest.targetName === undefined ? {} : { targetName: latest.targetName }),
+      ...(latest.selection === undefined ? {} : { selection: latest.selection }) } }),
     counts, groups, warnings,
   };
 }
@@ -245,6 +252,8 @@ export function renderRunSummary(summary: RunSummary): string {
     if (!uuidPattern.test(run.runId) || !runStatuses.has(run.status)) throw new Error('Invalid latest run in summary.');
     lines.push('## Latest linked run', '', `Run ID: ${run.runId}`, `Reported status: ${run.status}`,
       `Started: ${timestamp(run.startedAt, 'summary.latestRun.startedAt')}`, `Finished: ${timestamp(run.finishedAt, 'summary.latestRun.finishedAt')}`, '');
+    if (run.targetName) lines.push('Reported target name:', '', literal(safeReportedTargetName(run.targetName, 'summary.latestRun.targetName')), '');
+    if (run.selection) lines.push(`Selected cases: ${run.selection.selectedCaseIds.length} of ${run.selection.totalCases} exported cases`, '');
   } else lines.push('No linked runs were found. All selected cases are not-run.', '');
   lines.push('## Latest reported case counts', '');
   for (const status of countStatuses) lines.push(`- ${status}: ${nonnegativeCount(summary.counts[status], `summary.counts.${status}`)}`);

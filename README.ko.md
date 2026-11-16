@@ -36,6 +36,8 @@ node bin/error-to-test.mjs analyze --input examples/errors.json --profile exampl
 
 결과는 `analysis.json`, `report.md`, `flows/error-to-test.md`, `cases/error-to-test.json`, `provenance.json`입니다. 선택된 TC 후보가 없으면 suite를 만들지 않습니다. 출력 폴더는 매번 새 경로를 지정해야 합니다.
 
+Browser Error Log v1의 현재 이벤트 타입을 모두 지원하며, 0.2.0부터 추가된 `resource` 오류도 JSON·JSONL·프로필·비교·프로필 보완에 사용할 수 있습니다. 리소스 오류를 HTTP 오류로 바꾸거나 응답 상태·재현 동작을 추측하지 않습니다. 리소스 context와 breadcrumbs는 테스트 단계로 변환하지 않습니다. 자체 수집기의 네트워크 상태 `0`도 알 수 없는/불투명 상태로 보존하며 실제 HTTP 응답 코드로 취급하지 않습니다.
+
 `--min-count N`으로 입력에 N건 이상 있는 오류 묶음만 TC 후보로 만들 수 있습니다. 범위는 1~10,000이며 기본값은 1입니다. 중복 제거·날짜 필터 적용 후 건수를 기준으로 고르고, `--top`은 그중 순위가 높은 묶음 수를 제한합니다. 기준 미만의 묶음도 `analysis.json`과 `report.md`에 남으며, 제외가 발생하면 보고서에 선택 기준을 표시합니다. 이 건수는 입력에 포함된 수집 이벤트·제출 보고서 수입니다.
 
 ```sh
@@ -254,7 +256,11 @@ error-to-test readiness ./review-analysis --format json
 
 Flow QA 설치와 실행 대상 설정은 별도로 필요합니다. 위 `flows/`·`cases/` 구조를 기존 검토 화면에서 읽을 수 있습니다. 분석 명령은 브라우저를 실행하거나 외부 모델에 요청하지 않습니다. TC 통과만으로 원래 오류를 수정 완료 처리하지 않습니다.
 
-실행 후 `node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json`으로 결과를 원래 오류 묶음에 연결할 수 있습니다. suite 해시와 모든 case ID가 일치해야 하며, 결과는 `results/<runId>.json`에 저장합니다. 원본 e2e 리포트 대신 Flow QA가 정리한 `report-1`을 사용하세요.
+실행 후 `node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json`으로 결과를 원래 오류 묶음에 연결할 수 있습니다. suite 해시가 일치해야 하며 전체 실행은 모든 case ID를 포함해야 합니다. 일부 케이스만 실행한 Flow QA 보고서는 `selection.caseIds`가 보고된 케이스와 정확히 일치하고 `selection.totalCases`가 전체 suite 크기와 일치할 때 연결합니다. 알 수 없는·중복된 ID와 선택 선언 없는 누락은 거부합니다. 결과는 `results/<runId>.json`에 저장합니다. 원본 e2e 리포트 대신 Flow QA가 정리한 `report-1`을 사용하세요.
+
+선택 실행 결과에는 `selection: { mode: 'selected', totalCases, selectedCaseIds }`를 기록하며 요약의 최신 실행에도 포함합니다. 기존 전체 실행 결과는 계속 읽을 수 있고, 새 선택 실행 결과는 이 버전 이상의 reader가 필요합니다. 이전 reader는 추가 필드를 거부합니다. 최신 실행에서 빠진 케이스는 과거에 통과했어도 `not-run`이며, 미실행을 CI 실패로 처리하려면 `results --fail-on not-run`을 사용하세요.
+
+보고서에 실행 대상이 있으면 정제한 이름을 `targetName`으로 저장해 최신 실행 요약에 표시합니다. 대상 URL·기기 식별값은 복사하지 않습니다. 대상 이름은 고유 식별자가 아니므로 같은 이름을 다른 환경에 재사용하면 구별할 수 없습니다. 이전 reader는 이 추가 필드도 거부하며, 이름이 없는 기존 결과 파일은 계속 읽을 수 있습니다. 최신 실행은 연결된 전체 실행 중에서 고르므로 대상별 이력이 필요하면 번들을 분리하세요.
 
 연결한 결과는 `results`로 오류 묶음별 최신 TC 결과를 모아 볼 수 있습니다.
 
@@ -297,4 +303,6 @@ error-to-test results ./analysis --fail-on failed --fail-on error --fail-on not-
 
 알려진 자격증명·이메일·URL 인증/쿼리 정보는 결과에서 정제합니다. 민감정보가 포함된 실행 단계나 기대 결과는 변경해 통과시키지 않고 질문으로 남깁니다. 모든 개인정보를 제거한다고 보장하지 않으므로 실제 업무 데이터를 입력하기 전에는 별도로 정제하세요. 비공개 오류는 셸 기록에 남는 인자 대신 파일·표준 입력을 사용하세요.
 
-검증은 `npm run check`, `npm run check:package`입니다. 로컬 SDK·Flow QA와 Chromium이 준비되면 `FLOW_QA_SOURCE=/path/to/flow-qa BROWSER_ERROR_SOURCE=/path/to/browser-error-log npm run smoke:flowqa`로 수정 전 실패·수정 후 통과와 미확인 TC 차단을 확인할 수 있습니다. 자세한 입력 계약과 제한은 [영문 문서](README.md)에 있습니다.
+검증은 `npm run check`, `npm run check:package`입니다. `npm run smoke:ecosystem`은 현재 소스의 tarball과 공개 Browser Error Log 0.2.10·Flow QA 0.8.8을 새 환경에 설치합니다. Chromium에서 실제 JavaScript·resource 오류 수집, 검토 전 차단, 수정 전 실패·수정 후 통과, 선택 실행 재연결과 미실행 게이트, 설치된 UI·디자인 시스템 연결을 검사합니다. CI 릴리스도 이 검사를 통과해야 합니다. 결과는 `output/ecosystem/verification.json`에 기록하며 운영 서비스·실제 로그인·모델을 호출하지 않습니다.
+
+로컬 소스 조합은 `FLOW_QA_SOURCE=/path/to/flow-qa BROWSER_ERROR_SOURCE=/path/to/browser-error-log npm run smoke:flowqa`로 별도 검사할 수 있습니다. 자세한 입력 계약과 제한은 [영문 문서](README.md)에 있습니다.

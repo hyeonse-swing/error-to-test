@@ -8,7 +8,7 @@ import { hash, parseWebSteps, record } from './validation.ts';
 const sha256 = /^[a-f0-9]{64}$/;
 const groupId = /^group-[a-f0-9]{16}$/;
 const caseId = /^TC_[a-f0-9]{16}$/;
-const eventTypes = new Set<EventType>(['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual']);
+const eventTypes = new Set<EventType>(['javascript', 'promise', 'react', 'console', 'http', 'network', 'resource', 'manual']);
 const runtimes = new Set<Runtime>(['browser', 'webview-ios', 'webview-android', 'unknown']);
 const kinds = new Set(['browser-error-json', 'manual-json', 'manual-text', 'browser-error-jsonl', 'manual-jsonl']);
 const refinementNote = 'Refinement: Original input records were not rechecked; group ranking and the existing TC selection were preserved. Candidates were regenerated from the verified snapshot and supplied profile.';
@@ -72,7 +72,7 @@ function observation(value: unknown, label: string): void {
     string(network.method, `${label}.network.method`);
     string(network.url, `${label}.network.url`);
     if (network.status !== undefined) {
-      integer(network.status, `${label}.network.status`, 100);
+      integer(network.status, `${label}.network.status`);
       if (network.status > 599) invalid(`${label}.network.status`);
     }
     if (network.durationMs !== undefined && (typeof network.durationMs !== 'number' || !Number.isFinite(network.durationMs) || network.durationMs < 0)) {

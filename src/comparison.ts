@@ -18,7 +18,7 @@ export interface AnalysisComparison {
 
 const statuses: ComparisonStatus[] = ['only-current', 'both', 'only-baseline'];
 const runtimes: Runtime[] = ['browser', 'webview-ios', 'webview-android', 'unknown'];
-const types: EventType[] = ['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual'];
+const types: EventType[] = ['javascript', 'promise', 'react', 'console', 'http', 'network', 'resource', 'manual'];
 const kinds: SourceCoverage['kind'][] = ['browser-error-json', 'browser-error-jsonl', 'manual-json', 'manual-jsonl', 'manual-text'];
 const normalizedMax = 128 * 1024;
 const hex64 = /^[0-9a-f]{64}$/;

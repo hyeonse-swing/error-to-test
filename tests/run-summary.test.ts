@@ -92,6 +92,75 @@ test('latest complete run determines every case; timestamps beat insertion and m
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('latest selected run does not inherit earlier full results, and a later full run clears partial scope', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-summary-selected-'));
+  try {
+    const { out, provenance } = await makeBundle(temp, true);
+    const [first, second] = provenance.mappings.map((item: { caseId: string }) => item.caseId);
+    await linkFlowQaReport(out, report(provenance, ['passed', 'passed'], {
+      status: 'passed', finishedAt: '2026-10-13T00:01:00Z',
+    }));
+    const selected = report(provenance, [], {
+      status: 'passed', startedAt: '2026-10-14T00:00:00Z', finishedAt: '2026-10-14T00:01:00Z',
+      cases: [{ id: first, status: 'passed' }], selection: { caseIds: [first], totalCases: 2 },
+      target: { name: 'Stage', url: 'https://example.test/private?token=secret' },
+    });
+    await linkFlowQaReport(out, selected);
+    let summary = await readRunSummary(out);
+    assert.equal(summary.runCount, 2);
+    assert.equal(summary.latestRun?.targetName, 'Stage');
+    assert.deepEqual(summary.latestRun?.selection, { mode: 'selected', totalCases: 2, selectedCaseIds: [first] });
+    assert.deepEqual(summary.groups[0]!.cases.map(item => [item.caseId, item.status]), [[first, 'passed'], [second, 'not-run']]);
+    assert.equal(summary.counts['not-run'], 1);
+    assert.match(summary.warnings.join('\n'), /Latest linked run selected 1 of 2 exported cases/);
+    assert.match(renderRunSummary(summary), /Selected cases: 1 of 2 exported cases/);
+
+    await linkFlowQaReport(out, report(provenance, ['failed', 'passed'], {
+      status: 'failed', startedAt: '2026-10-15T00:00:00Z', finishedAt: '2026-10-15T00:01:00Z',
+    }));
+    summary = await readRunSummary(out);
+    assert.equal(summary.runCount, 3);
+    assert.equal(summary.latestRun?.selection, undefined);
+    assert.deepEqual(summary.groups[0]!.cases.map(item => item.status), ['failed', 'passed']);
+    assert.equal(summary.counts['not-run'], 0);
+    assert.doesNotMatch(summary.warnings.join('\n'), /Latest linked run selected/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('selected linked result scope is validated against the full provenance even when another run is newer', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-summary-selected-tamper-'));
+  try {
+    const { out, provenance } = await makeBundle(temp, true);
+    const [first, second] = provenance.mappings.map((item: { caseId: string }) => item.caseId);
+    const partialPath = await linkFlowQaReport(out, report(provenance, [], {
+      cases: [{ id: first, status: 'passed' }], selection: { caseIds: [first], totalCases: 2 },
+    }));
+    await linkFlowQaReport(out, report(provenance, ['passed', 'passed'], {
+      status: 'passed', startedAt: '2026-10-14T00:00:00Z', finishedAt: '2026-10-14T00:01:00Z',
+    }));
+    const original = JSON.parse(await readFile(partialPath, 'utf8'));
+    const variants: [string, (value: any) => void, RegExp][] = [
+      ['undeclared subset', value => { delete value.selection; }, /incomplete case list/],
+      ['wrong mode', value => { value.selection.mode = 'full'; }, /selection mode/],
+      ['extra field', value => { value.selection.other = true; }, /selection declaration/],
+      ['wrong total', value => { value.selection.totalCases = 3; }, /totalCases/],
+      ['zero total', value => { value.selection.totalCases = 0; }, /totalCases/],
+      ['wrong case ID', value => { value.selection.selectedCaseIds = [second]; }, /selected case IDs/],
+      ['duplicate case IDs', value => { value.selection.selectedCaseIds = [first, first]; }, /selected case IDs/],
+      ['unknown case ID', value => { value.selection.selectedCaseIds = ['TC_unknown']; }, /selected case IDs/],
+      ['added case', value => { value.cases.push({ ...provenance.mappings[1], status: 'passed' }); }, /totalCases/],
+    ];
+    for (const [label, mutate, error] of variants) {
+      const changed = structuredClone(original);
+      mutate(changed);
+      await writeFile(partialPath, JSON.stringify(changed));
+      await assert.rejects(readRunSummary(out), error, label);
+    }
+    await writeFile(partialPath, JSON.stringify(original));
+    assert.equal((await readRunSummary(out)).runCount, 2);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('all six reported case statuses are retained without inventing a resolved state', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-summary-statuses-'));
   try {

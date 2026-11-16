@@ -59,6 +59,8 @@ Textual expected behavior alone does not establish a runnable assertion. Supply 
 
 Accepts Browser Error Log v1 `{schemaVersion: 1, partial?: boolean, events: [...]}` exports or arrays of full v1 events. Files are limited to 10 MiB and 10,000 records. Identity duplicates are removed; conflicting payloads with the same project/event ID are rejected. `--from`/`--to` require timezone-qualified ISO timestamps. Undated manual reports are excluded when a date filter is requested.
 
+All current v1 event types are supported, including `resource` failures from Browser Error Log 0.2.0 and later. Resource events remain distinct from HTTP/network events; their presence does not establish a response status or an executable reproduction. Resource-specific context and breadcrumbs are not converted into test steps. Custom v1 network records may use status `0` (unknown/opaque), which is preserved without treating it as an HTTP response code.
+
 Grouping is deterministic and separates project, environment, release, runtime, page path, error message/name, and source location or HTTP method/path/status. Similar messages do not establish the same root cause. Counts mean **captured events** or **submitted reports**, not actual occurrence rates or affected users. Collection retention is unknown; imported `partial` status is preserved. TC selection defaults to the first 100 ranked groups; all groups remain in the analysis. More than 100 generated cases must be narrowed with `--top` or a smaller profile.
 
 Use `--min-count N` (1..10,000; default 1) to generate TCs only for groups with at least N supplied records after deduplication and date filtering. `--top` then limits the remaining ranked groups. Groups below the threshold remain in `analysis.json` and `report.md`; the report explains any exclusions. If no groups qualify, no suite is generated.
@@ -364,7 +366,11 @@ After a Flow QA run, associate its normalized report with the exact exported sui
 node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json
 ```
 
-The run's suite hash and every case ID must match. Safe case results are stored under `results/<runId>.json`, linked to their source groups/events. Unknown, missing, or duplicate cases are rejected; existing results are never overwritten. A raw e2e report is not accepted. Failed, blocked, and passed results remain distinct; no issue is automatically marked fixed.
+The run's suite hash and reported case IDs must match. Safe case results are stored under `results/<runId>.json`, linked to their source groups/events. Full reports must account for every exported case. Flow QA selected runs are accepted only when their explicit `selection.caseIds` exactly matches the reported cases and `selection.totalCases` matches the full exported suite. Unknown, duplicate, or undeclared missing cases are rejected; existing results are never overwritten. A raw e2e report is not accepted. Failed, blocked, and passed results remain distinct; no issue is automatically marked fixed.
+
+Selected results add `selection: { mode: 'selected', totalCases, selectedCaseIds }` to `error-to-test/results-1` and the latest run in `error-to-test/run-summary-1`. Older full result files remain supported. Use this version or newer to read selected result files; older readers reject the added selection field. Unselected cases are `not-run`, including when a previous full run passed. Use `results --fail-on not-run` when incomplete execution should fail a CI gate.
+
+When a report includes a target, its sanitized name is retained as optional `targetName` and displayed in the latest-run summary. Target URLs and device identifiers are not copied. The name is a reported label, not a unique target identity: reusing one name for different environments does not establish they are equivalent. Older readers also reject the new target field; older files without it remain readable. Latest-run selection still considers all linked runs; use separate bundles when target-specific histories are required.
 
 ### Summarize linked runs
 
@@ -376,7 +382,7 @@ error-to-test results .error-to-test/reviewed --out ./run-summary.md
 error-to-test results .error-to-test/reviewed --format json --out ./run-summary.json
 ```
 
-The summary includes the linked run count, latest run ID/status/timestamps, case totals, and each group's cases and reported reasons. `passed`, `failed`, `flaky`, `blocked`, `skipped`, and `error` remain separate. Without any linked runs, selected cases are `not-run`; groups excluded from TC selection are shown without selected cases. An empty selection does not become a passing result.
+The summary includes the linked run count, latest run ID/status/timestamps and selected-run scope, case totals, and each group's cases and reported reasons. `passed`, `failed`, `flaky`, `blocked`, `skipped`, and `error` remain separate. Without any linked runs, or when a case was omitted from the latest selected run, that case is `not-run`; groups excluded from TC selection are shown without selected cases. An empty selection does not become a passing result.
 
 Latest means the greatest reported `finishedAt`, then `startedAt`, then lexical run ID for ties. One whole run supplies all displayed case outcomes; earlier successes are never combined with newer runs to manufacture an all-passing result. When runs are linked, pending review and missing candidate context remain visible. These are supplied report outcomes, not review approval, independent execution proof, or evidence that the source issue is resolved.
 
@@ -422,7 +428,10 @@ Known credential assignments, bearer/recognized token formats, email addresses, 
 ```sh
 npm run check
 npm run check:package
+npm run smoke:ecosystem
 FLOW_QA_SOURCE=/path/to/flow-qa BROWSER_ERROR_SOURCE=/path/to/browser-error-log npm run smoke:flowqa
 ```
 
-The optional integration smoke uses the actual Browser Error Log SDK and Flow QA/e2e in a controlled local Chromium demo: collect errors, generate TCs, observe failures before repair and passes after repair, preserve an unresolved case, and check stale-source rejection. It requires their local source/dependencies and an installed Chromium browser. It does not access production, login, or call a model.
+`smoke:ecosystem` installs the current built tarball alongside published Browser Error Log 0.2.10 and Flow QA 0.8.8 in a fresh temporary consumer. It checks real JavaScript/resource capture, partial export preservation, the review gate, failures before fixture repair and passes after it, selected-run linkage and the not-run gate, and installed UI/design-system assets. CI requires this check before release preparation. Evidence is written to `output/ecosystem/verification.json`. Set `ERROR_TO_TEST_RELEASE_VERSION=X.Y.Z` to test that exact registry release instead of the local tarball. The script installs Chromium and only runs a controlled local fixture, without production access, login, or model calls.
+
+The optional `smoke:flowqa` uses local Browser Error Log and Flow QA sources in a controlled Chromium demo. It additionally preserves an unresolved case and checks stale-source rejection. It requires their local source/dependencies and an installed Chromium browser.

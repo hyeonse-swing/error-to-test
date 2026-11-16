@@ -1,6 +1,6 @@
 {
   "name": "@ihyeon/error-to-test",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Turn captured browser errors and pasted error reports into traceable regression test candidates.",
   "license": "MIT",
   "author": "Hyeonse Im",
@@ -54,6 +54,7 @@
     "prepack": "npm run build",
     "check:package": "npm run build && node scripts/package-smoke.mjs",
     "smoke:flowqa": "node scripts/flowqa-smoke.ts",
+    "smoke:ecosystem": "npm run build && node scripts/ecosystem-smoke.mjs",
     "demo": "node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json"
   },
   "devDependencies": {

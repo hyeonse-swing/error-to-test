@@ -2,6 +2,16 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.2.8
+
+Restores compatibility with Browser Error Log resource events across input, CLI, profiles, comparisons and refinement, and with Flow QA selected-run reports. Valid v1 network status values (0..599) are preserved; values below 100 are described as unavailable HTTP status rather than a response.
+
+Selected reports must declare the exact reported case set and the original suite size. Linked results preserve that selection; latest-run summaries leave omitted cases `not-run` even after a previous full pass. Optional sanitized target names survive linking, without target URLs or device identifiers. Existing full results remain readable. New selection/target fields require this reader or newer, because earlier readers reject unknown fields.
+
+The new package ecosystem smoke captures real SDK errors in Chromium, exercises review and execution boundaries through installed CLIs, links whole and selected runs, checks the `not-run` gate, and verifies installed UI/design-system assets. It also audits the fresh consumer for known high/critical runtime advisories. Release preparation now depends on this check in CI.
+
+Local release-candidate checks on 2026-11-16: 199 tests, type checking, build, isolated package installation and the controlled browser flow. Registry publication and GitHub Actions are separate evidence; their final status is available on the matching release/workflow.
+
 ## 0.2.0
 
 JSONL inputs add explicit `--format jsonl`, line-numbered validation, and browser/manual record kinds while preserving original bytes, multi-file provenance, comparison/baseline selection, and review gates. Existing 0.1.x bundles and formats remain supported. Integrations with exhaustive `SourceCoverage.kind` handling should include `browser-error-jsonl` and `manual-jsonl`.
@@ -10,7 +20,7 @@ This minor release sets both package manifests to `0.2.0` before verification. T
 
 ## Automatic publication
 
-Pull requests and main pushes verify the package on Ubuntu and macOS. A verified main push then prepares an immutable release source:
+Pull requests and main pushes verify the package on Ubuntu and macOS. An additional Ubuntu job installs the current tarball with published Browser Error Log 0.2.10 and Flow QA 0.8.8, then checks the complete capture/analyze/run/link loop in Chromium. Both jobs must pass before a main push prepares an immutable release source:
 
 - The first publication uses the manifest version (`0.1.0`). A new npm package needs one authenticated bootstrap publication before its Trusted Publisher can be configured.
 - Changes to `src/`, `bin/`, `examples/`, `LICENSE`, `package.json`, `package-lock.json`, or `tsconfig.json` automatically increase patch when the manifest still matches npm latest. The workflow commits the version change as `github-actions[bot]` and publishes that exact commit in the same run.
@@ -27,6 +37,7 @@ Publishing uses npm Trusted Publishing (GitHub Actions OIDC) for `hyeonse-swing/
 npm ci
 npm run check
 npm run check:package
+npm run smoke:ecosystem
 ```
 
 To test real error capture and browser execution, supply local checked-out SDK/Flow QA sources and an installed Chromium browser:
@@ -47,4 +58,4 @@ The browser integration was verified on 2026-10-13 with a controlled local appli
 | Report linkage | Before/after reports linked to the exact suite and source groups |
 | Changed source | Stale flow and bundle rejected |
 
-An unresolved case means the overall QA run can remain `blocked` even when the two runnable cases pass. This integration check is separate from standalone CI and requires the sibling packages; CI does not fetch company repositories or application data. Live service authentication, native devices, and production behavior are outside this proof.
+An unresolved case means the overall QA run can remain `blocked` even when the two runnable cases pass. This historical source integration check requires sibling repositories. The newer `smoke:ecosystem` check runs in CI using public packages and a local fixture; neither check fetches company repositories or application data. Live service authentication, native devices, and production behavior are outside this proof.

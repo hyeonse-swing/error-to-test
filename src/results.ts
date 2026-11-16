@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { jsonText, readVerifiedBundle } from './artifacts.ts';
 import { record, text, timestamp } from './validation.ts';
 import { redactText } from './redact.ts';
+import { safeReportedTargetName, validateResultSelection } from './result-selection.ts';
 
 const runStatuses = new Set(['passed', 'failed', 'blocked', 'error', 'interrupted']);
 const caseStatuses = new Set(['passed', 'failed', 'flaky', 'blocked', 'skipped', 'error']);
@@ -23,24 +24,30 @@ export async function linkFlowQaReport(directory: string, rawReport: unknown): P
   const mappings = provenance.mappings.map((item, index) => record(item, `mappings[${index}]`));
   const expected = new Map(mappings.map(item => [item.caseId, item]));
   const seen = new Set<string>();
+  const reportCaseIds: string[] = [];
   const cases = report.cases.map((item, index) => {
     const original = record(item, `report.cases[${index}]`), id = text(original.id, 'case.id');
     const mapping = expected.get(id);
     if (!mapping || seen.has(id)) throw new Error('The report contains unknown or duplicate case IDs.');
     seen.add(id);
+    reportCaseIds.push(id);
     const caseStatus = text(original.status, 'case.status');
     if (!caseStatuses.has(caseStatus)) throw new Error('Invalid Flow QA case status.');
     return { ...mapping, status: caseStatus, ...(original.reason === undefined ? {} : { reason: redactText(text(original.reason, 'case.reason')) }) };
   });
-  if (seen.size !== expected.size) throw new Error('The report does not account for every exported case.');
+  const selection = validateResultSelection(report.selection, Object.hasOwn(report, 'selection'),
+    reportCaseIds, new Set(expected.keys() as Iterable<string>), 'Flow QA report');
   if (status === 'passed' && cases.some(item => item.status === 'failed' || item.status === 'error')) throw new Error('The report status contradicts its case results.');
   const startedAt = timestamp(report.startedAt, 'report.startedAt'), finishedAt = timestamp(report.finishedAt, 'report.finishedAt');
   if (finishedAt < startedAt) throw new Error('The run finished before its start timestamp.');
+  const targetName = report.target === undefined ? undefined
+    : safeReportedTargetName(record(report.target, 'report.target').name, 'report.target.name');
   const output = {
     schemaVersion: 'error-to-test/results-1', runId,
     inputSha256: provenance.inputSha256, suiteSha256: provenance.suiteSha256,
     startedAt, finishedAt,
-    status, cases,
+    status, ...(targetName === undefined ? {} : { targetName }),
+    ...(selection === undefined ? {} : { selection }), cases,
     note: 'These results cover the specified assertions. No source issue was automatically closed.',
   };
   const resultsRoot = resolve(root, 'results');

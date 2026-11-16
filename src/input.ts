@@ -15,7 +15,7 @@ export interface ParseInputOptions {
   to?: string;
 }
 
-const TYPES = new Set<EventType>(['javascript', 'promise', 'react', 'console', 'http', 'network', 'manual']);
+const TYPES = new Set<EventType>(['javascript', 'promise', 'react', 'console', 'http', 'network', 'resource', 'manual']);
 const RUNTIMES = new Set<Runtime>(['browser', 'webview-ios', 'webview-android', 'unknown']);
 const MAX_RECORDS = 10_000;
 const LOGGER_PREFIX = /^\[(?:ERROR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL|vite|timestamp|\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})?)?|\d{2}:\d{2}:\d{2})\][ \t]+\S/i;
@@ -110,7 +110,7 @@ function browserEvent(value: unknown, index: number): ErrorObservation {
     let status: number | undefined;
     if (net.status !== undefined) {
       status = number(net.status, `${label}.network.status`, true);
-      if (status < 100 || status > 599) throw new Error(`${label}.network.status must be 100..599`);
+      if (status > 599) throw new Error(`${label}.network.status must be 0..599`);
     }
     network = { method: redactText(method).toUpperCase(), url: safeUrl(url), durationMs, ...(status === undefined ? {} : { status }) };
   }

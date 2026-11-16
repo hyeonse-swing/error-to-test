@@ -81,6 +81,31 @@ test('not-run and empty selection fail, while interrupted run status does not co
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('CLI not-run gate fails for latest selected run despite a prior full pass', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-gate-selected-'));
+  try {
+    const { bundle, provenance } = await bundleAt(temp, 3);
+    await link(bundle, provenance, ['passed', 'passed', 'passed'], 'passed', 13);
+    const selectedId = provenance.mappings[1]!.caseId;
+    await linkFlowQaReport(bundle, {
+      schemaVersion: 'flow-qa/report-1', runId: randomUUID(), suiteHash: provenance.suiteSha256,
+      startedAt: '2026-10-14T00:00:00Z', finishedAt: '2026-10-14T00:01:00Z', status: 'passed',
+      cases: [{ id: selectedId, status: 'passed' }], selection: { caseIds: [selectedId], totalCases: 3 },
+    });
+    const partial = run(['results', bundle, '--format', 'json', '--fail-on', 'not-run']);
+    assert.equal(partial.status, 2, partial.stderr);
+    assert.equal(partial.stderr, 'Results gate failed: 2 cases match --fail-on (not-run=2).\n');
+    const summary = JSON.parse(partial.stdout);
+    assert.equal(summary.counts.passed, 1);
+    assert.equal(summary.counts['not-run'], 2);
+    assert.match(summary.warnings.join('\n'), /Latest linked run selected 1 of 3/);
+    await link(bundle, provenance, ['passed', 'passed', 'passed'], 'passed', 15);
+    const full = run(['results', bundle, '--fail-on', 'not-run']);
+    assert.equal(full.status, 0, full.stderr);
+    assert.equal(full.stderr, 'Results gate passed: 0 cases match --fail-on (not-run=0).\n');
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('saved full reports retain file protections; operational and invalid requests have no gate outcome', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-gate-files-'));
   try {
