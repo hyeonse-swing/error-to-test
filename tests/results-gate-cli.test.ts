@@ -106,6 +106,53 @@ test('CLI not-run gate fails for latest selected run despite a prior full pass',
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('CLI target fingerprint gates only that target even when another target ran later', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-gate-target-'));
+  try {
+    const { bundle, provenance } = await bundleAt(temp, 2);
+    const [first, second] = provenance.mappings.map(item => item.caseId);
+    const base = {
+      schemaVersion: 'flow-qa/report-1', suiteHash: provenance.suiteSha256,
+      status: 'passed', target: { name: 'Stage', url: 'https://example.test/target-a?token=secret' },
+    };
+    const fullCases = [first, second].map(id => ({ id, status: 'passed' }));
+    const aFull = await linkFlowQaReport(bundle, { ...base, runId: randomUUID(),
+      startedAt: '2026-10-13T00:00:00Z', finishedAt: '2026-10-13T00:01:00Z', cases: fullCases,
+    });
+    const aFingerprint = JSON.parse(await readFile(aFull, 'utf8')).targetFingerprint as string;
+    await linkFlowQaReport(bundle, { ...base, runId: randomUUID(),
+      startedAt: '2026-10-14T00:00:00Z', finishedAt: '2026-10-14T00:01:00Z',
+      cases: [{ id: first, status: 'passed' }], selection: { caseIds: [first], totalCases: 2 },
+    });
+    const bFull = await linkFlowQaReport(bundle, { ...base,
+      target: { name: 'Stage', url: 'https://example.test/target-b?token=secret' }, runId: randomUUID(),
+      startedAt: '2026-10-15T00:00:00Z', finishedAt: '2026-10-15T00:01:00Z', cases: fullCases,
+    });
+    const bFingerprint = JSON.parse(await readFile(bFull, 'utf8')).targetFingerprint as string;
+    const global = run(['results', bundle, '--format', 'json', '--fail-on', 'not-run']);
+    assert.equal(global.status, 0, global.stderr);
+    assert.equal(JSON.parse(global.stdout).runCount, 3);
+    assert.equal(JSON.parse(global.stdout).targets.length, 2);
+    const a = run(['results', bundle, '--target-fingerprint', aFingerprint, '--format', 'json', '--fail-on', 'not-run']);
+    assert.equal(a.status, 2, a.stderr);
+    assert.equal(a.stderr, 'Results gate failed: 1 cases match --fail-on (not-run=1).\n');
+    assert.equal(JSON.parse(a.stdout).runCount, 2);
+    assert.equal(JSON.parse(a.stdout).excludedRunCount, 1);
+    assert.equal(JSON.parse(a.stdout).latestRun.targetFingerprint, aFingerprint);
+    const b = run(['results', bundle, '--target-fingerprint', bFingerprint, '--fail-on', 'not-run']);
+    assert.equal(b.status, 0, b.stderr);
+    assert.match(b.stdout, /Selected target fingerprint/);
+    for (const fingerprint of ['f'.repeat(64), 'A'.repeat(64), 'secret-token=private']) {
+      const invalid = run(['results', bundle, '--target-fingerprint', fingerprint, '--fail-on', 'not-run']);
+      assert.equal(invalid.status, 1);
+      assert.equal(invalid.stdout, '');
+      assert.doesNotMatch(invalid.stderr, /Results gate (failed|passed):|secret-token=private/);
+    }
+    assert.match(run(['--help']).stdout, /--target-fingerprint SHA256/);
+    assert.equal(run(['readiness', bundle, '--target-fingerprint', aFingerprint]).status, 1);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('saved full reports retain file protections; operational and invalid requests have no gate outcome', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-gate-files-'));
   try {

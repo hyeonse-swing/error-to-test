@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { redactText } from './redact.ts';
-import { text } from './validation.ts';
+import { record, text } from './validation.ts';
 
 /** Flow QA reports use caseIds; linked results record an explicit selected-run scope. */
 export interface LinkedSelection {
@@ -12,6 +13,59 @@ export interface LinkedSelection {
 export function safeReportedTargetName(value: unknown, label: string): string {
   const name = text(value, label);
   return redactText(name.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+|(?<!:)\/\/[^\s<>"']+/gi, '[redacted-url]'));
+}
+
+const fingerprintPattern = /^[0-9a-f]{64}$/;
+
+export function validatedTargetFingerprint(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !fingerprintPattern.test(value)) {
+    throw new Error(`${label} must be a lowercase SHA-256 fingerprint (64 hex characters).`);
+  }
+  return value;
+}
+
+/** Match Flow QA targetFingerprint's canonical identity and key order exactly. */
+export function reportedTargetIdentity(value: unknown, status: string): { targetName: string; targetFingerprint?: string } {
+  const target = record(value, 'report.target');
+  const kind = target.kind;
+  const keys = kind === 'mobile' ? ['name', 'kind', 'platform', 'bundleId', 'device'] : ['name', 'kind', 'url'];
+  if ((kind !== undefined && kind !== 'web' && kind !== 'mobile')
+    || Object.keys(target).some(key => !keys.includes(key))) {
+    throw new Error('report.target has an unsupported shape or kind.');
+  }
+  let targetName = text(target.name, 'report.target.name');
+  let identity: { kind: 'web'; url: string } | { kind: 'mobile'; platform: string; bundleId: string; device: string };
+  if (kind === 'mobile') {
+    if (target.platform !== 'ios' && target.platform !== 'android') throw new Error('report.target.platform must be ios or android.');
+    const bundleId = text(target.bundleId, 'report.target.bundleId');
+    if (target.device === '') {
+      if (status !== 'blocked' && status !== 'interrupted') throw new Error('report.target.device may be empty only for a blocked or interrupted mobile fallback report.');
+      targetName = targetName.replaceAll(bundleId, '[redacted-target]');
+      return { targetName: safeReportedTargetName(targetName, 'report.target.name') };
+    }
+    identity = {
+      kind: 'mobile', platform: target.platform,
+      bundleId,
+      device: text(target.device, 'report.target.device'),
+    };
+    for (const value of [identity.bundleId, identity.device]) targetName = targetName.replaceAll(value, '[redacted-target]');
+  } else {
+    if (target.url === '') {
+      if (kind !== undefined || (status !== 'error' && status !== 'interrupted')) {
+        throw new Error('report.target.url may be empty only for an error or interrupted web fallback report.');
+      }
+      return { targetName: safeReportedTargetName(targetName, 'report.target.name') };
+    }
+    const url = text(target.url, 'report.target.url');
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Unsupported protocol');
+    } catch { throw new Error('report.target.url must be an HTTP or HTTPS URL.'); }
+    identity = { kind: 'web', url };
+    targetName = targetName.replaceAll(url, '[redacted-url]');
+  }
+  targetName = safeReportedTargetName(targetName, 'report.target.name');
+  return { targetName, targetFingerprint: createHash('sha256').update(JSON.stringify(identity)).digest('hex') };
 }
 
 export function validateResultSelection(

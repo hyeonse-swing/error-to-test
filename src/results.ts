@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { jsonText, readVerifiedBundle } from './artifacts.ts';
 import { record, text, timestamp } from './validation.ts';
 import { redactText } from './redact.ts';
-import { safeReportedTargetName, validateResultSelection } from './result-selection.ts';
+import { reportedTargetIdentity, validateResultSelection } from './result-selection.ts';
 
 const runStatuses = new Set(['passed', 'failed', 'blocked', 'error', 'interrupted']);
 const caseStatuses = new Set(['passed', 'failed', 'flaky', 'blocked', 'skipped', 'error']);
@@ -20,6 +20,11 @@ export async function linkFlowQaReport(directory: string, rawReport: unknown): P
   if (report.suiteHash !== provenance.suiteSha256) throw new Error('The run used a different suite. Its result cannot be linked to these candidates.');
   const status = text(report.status, 'report.status');
   if (!runStatuses.has(status)) throw new Error('Invalid Flow QA run status.');
+  const rawTarget = report.target === undefined ? undefined : record(report.target, 'report.target');
+  const target = rawTarget === undefined ? undefined : reportedTargetIdentity(rawTarget, status);
+  const targetValues = rawTarget === undefined ? [] : rawTarget.kind === 'mobile'
+    ? [rawTarget.bundleId as string, rawTarget.device as string]
+    : [rawTarget.url as string];
   if (!Array.isArray(report.cases) || report.cases.length > 100 || !Array.isArray(provenance.mappings)) throw new Error('Invalid Flow QA case list.');
   const mappings = provenance.mappings.map((item, index) => record(item, `mappings[${index}]`));
   const expected = new Map(mappings.map(item => [item.caseId, item]));
@@ -33,20 +38,23 @@ export async function linkFlowQaReport(directory: string, rawReport: unknown): P
     reportCaseIds.push(id);
     const caseStatus = text(original.status, 'case.status');
     if (!caseStatuses.has(caseStatus)) throw new Error('Invalid Flow QA case status.');
-    return { ...mapping, status: caseStatus, ...(original.reason === undefined ? {} : { reason: redactText(text(original.reason, 'case.reason')) }) };
+    let reason = original.reason === undefined ? undefined : text(original.reason, 'case.reason');
+    if (reason !== undefined) {
+      for (const value of targetValues) if (value) reason = reason.replaceAll(value, '[redacted-target]');
+      reason = redactText(reason);
+    }
+    return { ...mapping, status: caseStatus, ...(reason === undefined ? {} : { reason }) };
   });
   const selection = validateResultSelection(report.selection, Object.hasOwn(report, 'selection'),
     reportCaseIds, new Set(expected.keys() as Iterable<string>), 'Flow QA report');
   if (status === 'passed' && cases.some(item => item.status === 'failed' || item.status === 'error')) throw new Error('The report status contradicts its case results.');
   const startedAt = timestamp(report.startedAt, 'report.startedAt'), finishedAt = timestamp(report.finishedAt, 'report.finishedAt');
   if (finishedAt < startedAt) throw new Error('The run finished before its start timestamp.');
-  const targetName = report.target === undefined ? undefined
-    : safeReportedTargetName(record(report.target, 'report.target').name, 'report.target.name');
   const output = {
     schemaVersion: 'error-to-test/results-1', runId,
     inputSha256: provenance.inputSha256, suiteSha256: provenance.suiteSha256,
     startedAt, finishedAt,
-    status, ...(targetName === undefined ? {} : { targetName }),
+    status, ...(target === undefined ? {} : target),
     ...(selection === undefined ? {} : { selection }), cases,
     note: 'These results cover the specified assertions. No source issue was automatically closed.',
   };

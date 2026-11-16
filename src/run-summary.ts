@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { literal, readVerifiedBundle } from './artifacts.ts';
 import { redactText } from './redact.ts';
 import { record, text, timestamp } from './validation.ts';
-import { safeReportedTargetName, validateResultSelection, type LinkedSelection } from './result-selection.ts';
+import { safeReportedTargetName, validatedTargetFingerprint, validateResultSelection, type LinkedSelection } from './result-selection.ts';
 
 export type LinkedRunStatus = 'passed' | 'failed' | 'blocked' | 'error' | 'interrupted';
 export type LinkedCaseStatus = 'passed' | 'failed' | 'flaky' | 'blocked' | 'skipped' | 'error';
@@ -15,11 +15,20 @@ export interface RunSummary {
   inputSha256: string;
   suiteSha256?: string;
   runCount: number;
-  latestRun?: { runId: string; status: LinkedRunStatus; startedAt: string; finishedAt: string; targetName?: string; selection?: LinkedSelection };
+  /** Present only when a target fingerprint was requested. Counts and latestRun then use that target alone. */
+  selectedTargetFingerprint?: string;
+  /** Number of linked runs excluded from the selected target scope. */
+  excludedRunCount?: number;
+  /** Linked runs with no fingerprint, including legacy files with only targetName. */
+  unscopedRunCount: number;
+  targets: { fingerprint: string; names: string[]; runCount: number }[];
+  latestRun?: { runId: string; status: LinkedRunStatus; startedAt: string; finishedAt: string; targetName?: string; targetFingerprint?: string; selection?: LinkedSelection };
   counts: Record<DisplayCaseStatus, number>;
   groups: { groupId: string; message: string; cases: { caseId: string; candidateId: string; eventIds: string[]; status: DisplayCaseStatus; reason?: string }[] }[];
   warnings: string[];
 }
+
+export interface ReadRunSummaryOptions { targetFingerprint?: string }
 
 const runStatuses = new Set<LinkedRunStatus>(['passed', 'failed', 'blocked', 'error', 'interrupted']);
 const caseStatuses = new Set<LinkedCaseStatus>(['passed', 'failed', 'flaky', 'blocked', 'skipped', 'error']);
@@ -95,7 +104,7 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
   let raw: Record<string, unknown>;
   try { raw = record(JSON.parse(content), `Linked result ${name}`); }
   catch { throw new Error(`Linked result ${name} is not a valid JSON object.`); }
-  exactKeys(raw, ['schemaVersion', 'runId', 'inputSha256', 'suiteSha256', 'startedAt', 'finishedAt', 'status', 'cases', 'note'], ['targetName', 'selection'], `Linked result ${name}`);
+  exactKeys(raw, ['schemaVersion', 'runId', 'inputSha256', 'suiteSha256', 'startedAt', 'finishedAt', 'status', 'cases', 'note'], ['targetName', 'targetFingerprint', 'selection'], `Linked result ${name}`);
   if (raw.schemaVersion !== 'error-to-test/results-1') throw new Error(`Linked result ${name} uses an unsupported schema.`);
   const runId = text(raw.runId, `${name}.runId`);
   if (!uuidPattern.test(runId) || `${runId}.json` !== name) throw new Error(`Linked result ${name} run ID does not match its filename.`);
@@ -109,6 +118,8 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
   if (finishedAt < startedAt) throw new Error(`Linked result ${name} finished before it started.`);
   text(raw.note, `${name}.note`);
   const targetName = raw.targetName === undefined ? undefined : safeReportedTargetName(raw.targetName, `${name}.targetName`);
+  const targetFingerprint = raw.targetFingerprint === undefined ? undefined
+    : validatedTargetFingerprint(raw.targetFingerprint, `${name}.targetFingerprint`);
   if (!Array.isArray(raw.cases) || raw.cases.length > expected.size) throw new Error(`Linked result ${name} has an invalid case list.`);
   const seen = new Set<string>();
   const cases = raw.cases.map((item, index): LinkedCase => {
@@ -133,7 +144,9 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
     throw new Error(`Linked result ${name} contradicts its case results.`);
   }
   return { runId, status: status as LinkedRunStatus, startedAt, finishedAt,
-    ...(targetName === undefined ? {} : { targetName }), ...(selection === undefined ? {} : { selection }), cases };
+    ...(targetName === undefined ? {} : { targetName }),
+    ...(targetFingerprint === undefined ? {} : { targetFingerprint }),
+    ...(selection === undefined ? {} : { selection }), cases };
 }
 
 function later(a: LinkedRun, b: LinkedRun): boolean {
@@ -147,7 +160,13 @@ function nonnegativeCount(value: unknown, label: string): number {
   return value as number;
 }
 
-export async function readRunSummary(directory: string): Promise<RunSummary> {
+export async function readRunSummary(directory: string, options: ReadRunSummaryOptions = {}): Promise<RunSummary> {
+  if (options === null || typeof options !== 'object' || Array.isArray(options)
+    || Object.keys(options).some(key => key !== 'targetFingerprint')) {
+    throw new Error('readRunSummary options support only targetFingerprint.');
+  }
+  const selectedTargetFingerprint = options.targetFingerprint === undefined ? undefined
+    : validatedTargetFingerprint(options.targetFingerprint, 'targetFingerprint');
   const root = resolve(directory);
   const { analysis, provenance, verification } = await readVerifiedBundle(root);
   const inputSha256 = sha256(provenance.inputSha256, 'provenance.inputSha256');
@@ -180,7 +199,10 @@ export async function readRunSummary(directory: string): Promise<RunSummary> {
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
+  let totalRunCount = 0;
   let runCount = 0;
+  let unscopedRunCount = 0;
+  const targets = new Map<string, { fingerprint: string; names: Set<string>; runCount: number }>();
   let latest: LinkedRun | undefined;
   if (resultsInfo) {
     if (!resultsInfo.isDirectory() || resultsInfo.isSymbolicLink()) throw new Error('Results must be a real directory inside this bundle.');
@@ -203,11 +225,28 @@ export async function readRunSummary(directory: string): Promise<RunSummary> {
       totalBytes += bytes;
       if (totalBytes > maxTotalBytes) throw new Error('Linked results exceed 64 MiB in total.');
       const run = parseResult(content, name, inputSha256, suiteSha256, expected);
-      runCount++;
-      if (!latest || later(run, latest)) latest = run;
+      totalRunCount++;
+      if (run.targetFingerprint === undefined) unscopedRunCount++;
+      else {
+        let target = targets.get(run.targetFingerprint);
+        if (!target) {
+          target = { fingerprint: run.targetFingerprint, names: new Set(), runCount: 0 };
+          targets.set(run.targetFingerprint, target);
+        }
+        target.runCount++;
+        if (run.targetName !== undefined) target.names.add(run.targetName);
+      }
+      if (selectedTargetFingerprint === undefined || run.targetFingerprint === selectedTargetFingerprint) {
+        runCount++;
+        if (!latest || later(run, latest)) latest = run;
+      }
     }
     const after = await lstat(resultsRoot);
     if (!after.isDirectory() || after.isSymbolicLink() || !sameFile(resultsInfo, after)) throw new Error('Results directory changed while reading.');
+  }
+
+  if (selectedTargetFingerprint !== undefined && !targets.has(selectedTargetFingerprint)) {
+    throw new Error('No linked runs match the requested target fingerprint. Inspect the unfiltered results inventory.');
   }
 
   const latestCases = new Map(latest?.cases.map(item => [item.caseId, item]) ?? []);
@@ -222,6 +261,15 @@ export async function readRunSummary(directory: string): Promise<RunSummary> {
     });
   }
   const warnings = ['Counts are the latest reported case outcomes, not proof that any source issue is resolved.'];
+  if (selectedTargetFingerprint === undefined && targets.size > 1) {
+    warnings.push(`This history contains ${targets.size} target fingerprints. Unfiltered counts use only the latest run across all targets; select a target fingerprint for target-specific counts.`);
+  }
+  if (unscopedRunCount > 0) {
+    warnings.push(`${unscopedRunCount} linked run(s) have no target fingerprint and cannot be assigned to a target scope (including legacy results).`);
+  }
+  if (selectedTargetFingerprint !== undefined && totalRunCount > runCount) {
+    warnings.push(`The selected target scope excludes ${totalRunCount - runCount} linked run(s), including ${unscopedRunCount} unscoped run(s).`);
+  }
   if (latest?.selection) warnings.push(`Latest linked run selected ${latest.selection.selectedCaseIds.length} of ${latest.selection.totalCases} exported cases. Unselected cases are not-run even if an earlier run reported outcomes for them.`);
   if (analysis.warnings !== undefined) warnings.push(...stringList(analysis.warnings, 'analysis.warnings').map(redactText));
   if (runCount) {
@@ -236,8 +284,13 @@ export async function readRunSummary(directory: string): Promise<RunSummary> {
   return {
     schemaVersion: 'error-to-test/run-summary-1', inputSha256,
     ...(suiteSha256 === undefined ? {} : { suiteSha256 }), runCount,
+    ...(selectedTargetFingerprint === undefined ? {} : { selectedTargetFingerprint, excludedRunCount: totalRunCount - runCount }),
+    unscopedRunCount,
+    targets: [...targets.values()].sort((a, b) => a.fingerprint.localeCompare(b.fingerprint))
+      .map(target => ({ fingerprint: target.fingerprint, names: [...target.names].sort(), runCount: target.runCount })),
     ...(latest === undefined ? {} : { latestRun: { runId: latest.runId, status: latest.status, startedAt: latest.startedAt, finishedAt: latest.finishedAt,
       ...(latest.targetName === undefined ? {} : { targetName: latest.targetName }),
+      ...(latest.targetFingerprint === undefined ? {} : { targetFingerprint: latest.targetFingerprint }),
       ...(latest.selection === undefined ? {} : { selection: latest.selection }) } }),
     counts, groups, warnings,
   };
@@ -246,13 +299,29 @@ export async function readRunSummary(directory: string): Promise<RunSummary> {
 export function renderRunSummary(summary: RunSummary): string {
   const lines = ['# Linked run summary', '', `Input SHA-256: ${sha256(summary.inputSha256, 'summary.inputSha256')}`];
   if (summary.suiteSha256 !== undefined) lines.push(`Suite SHA-256: ${sha256(summary.suiteSha256, 'summary.suiteSha256')}`);
-  lines.push(`Linked runs: ${nonnegativeCount(summary.runCount, 'summary.runCount')}`, '');
+  if (summary.selectedTargetFingerprint !== undefined) {
+    lines.push(`Selected target fingerprint: ${validatedTargetFingerprint(summary.selectedTargetFingerprint, 'summary.selectedTargetFingerprint')}`,
+      `Excluded linked runs: ${nonnegativeCount(summary.excludedRunCount, 'summary.excludedRunCount')}`);
+  }
+  lines.push(`Linked runs: ${nonnegativeCount(summary.runCount, 'summary.runCount')}`,
+    `Unscoped linked runs: ${nonnegativeCount(summary.unscopedRunCount, 'summary.unscopedRunCount')}`, '');
+  lines.push('## Available targets', '');
+  if (!Array.isArray(summary.targets) || !summary.targets.length) lines.push('No fingerprinted targets were found.', '');
+  else {
+    for (const target of summary.targets) {
+      lines.push(`Fingerprint: ${validatedTargetFingerprint(target.fingerprint, 'summary.targets.fingerprint')}`,
+        `Linked runs: ${nonnegativeCount(target.runCount, 'summary.targets.runCount')}`, '');
+      if (!Array.isArray(target.names)) throw new Error('summary.targets.names must be an array.');
+      if (target.names.length) lines.push('Reported names:', '', literal(target.names.map(name => safeReportedTargetName(name, 'summary.targets.names')).join('\n')), '');
+    }
+  }
   if (summary.latestRun) {
     const run = summary.latestRun;
     if (!uuidPattern.test(run.runId) || !runStatuses.has(run.status)) throw new Error('Invalid latest run in summary.');
     lines.push('## Latest linked run', '', `Run ID: ${run.runId}`, `Reported status: ${run.status}`,
       `Started: ${timestamp(run.startedAt, 'summary.latestRun.startedAt')}`, `Finished: ${timestamp(run.finishedAt, 'summary.latestRun.finishedAt')}`, '');
     if (run.targetName) lines.push('Reported target name:', '', literal(safeReportedTargetName(run.targetName, 'summary.latestRun.targetName')), '');
+    if (run.targetFingerprint) lines.push(`Target fingerprint: ${validatedTargetFingerprint(run.targetFingerprint, 'summary.latestRun.targetFingerprint')}`, '');
     if (run.selection) lines.push(`Selected cases: ${run.selection.selectedCaseIds.length} of ${run.selection.totalCases} exported cases`, '');
   } else lines.push('No linked runs were found. All selected cases are not-run.', '');
   lines.push('## Latest reported case counts', '');

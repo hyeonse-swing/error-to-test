@@ -370,7 +370,7 @@ The run's suite hash and reported case IDs must match. Safe case results are sto
 
 Selected results add `selection: { mode: 'selected', totalCases, selectedCaseIds }` to `error-to-test/results-1` and the latest run in `error-to-test/run-summary-1`. Older full result files remain supported. Use this version or newer to read selected result files; older readers reject the added selection field. Unselected cases are `not-run`, including when a previous full run passed. Use `results --fail-on not-run` when incomplete execution should fail a CI gate.
 
-When a report includes a target, its sanitized name is retained as optional `targetName` and displayed in the latest-run summary. Target URLs and device identifiers are not copied. The name is a reported label, not a unique target identity: reusing one name for different environments does not establish they are equivalent. Older readers also reject the new target field; older files without it remain readable. Latest-run selection still considers all linked runs; use separate bundles when target-specific histories are required.
+When a report includes a complete supported web or mobile target, the linked result retains its sanitized `targetName` and a `targetFingerprint`. This SHA-256 value matches Flow QA's canonical identity: web `{ kind: 'web', url }` or mobile `{ kind: 'mobile', platform, bundleId, device }`, serialized in that key order. The target name is only a label; two targets with the same name remain distinct when their identities differ. Raw target fields are scrubbed from linked names and reasons rather than copied into results. The fingerprint is a stable identifier, **not anonymization**: someone who knows or guesses a target can calculate and recognize its fingerprint. Earlier readers reject the added field. Older full and selected result files without a fingerprint remain readable, but cannot be assigned to a target scope. Flow QA may also report an early `error` or `interrupted` with an empty web URL, or a `blocked` or `interrupted` mobile run with an empty device; these known fallback reports retain a sanitized name without inventing a fingerprint and remain unscoped.
 
 ### Summarize linked runs
 
@@ -380,11 +380,12 @@ Read the latest linked run's case outcomes by original error group:
 error-to-test results .error-to-test/reviewed
 error-to-test results .error-to-test/reviewed --out ./run-summary.md
 error-to-test results .error-to-test/reviewed --format json --out ./run-summary.json
+error-to-test results .error-to-test/reviewed --target-fingerprint "$TARGET_FINGERPRINT" --fail-on not-run
 ```
 
-The summary includes the linked run count, latest run ID/status/timestamps and selected-run scope, case totals, and each group's cases and reported reasons. `passed`, `failed`, `flaky`, `blocked`, `skipped`, and `error` remain separate. Without any linked runs, or when a case was omitted from the latest selected run, that case is `not-run`; groups excluded from TC selection are shown without selected cases. An empty selection does not become a passing result.
+The summary includes the linked run count, latest run ID/status/timestamps and selected-run scope, case totals, and each group's cases and reported reasons. It also lists each available target fingerprint, sanitized reported names, run count, and the number of unscoped legacy, targetless, or early fallback runs. Obtain a fingerprint from unfiltered JSON (`targets[].fingerprint`) or Markdown, then pass it to `--target-fingerprint` or `readRunSummary(directory, { targetFingerprint })`. The filter requires exactly 64 lowercase hex characters. An unknown fingerprint is an error (exit `1`), never a passing empty target. In a scoped summary, `runCount` counts only that target's runs, `excludedRunCount` counts all other runs, and the latest run and case counts come only from that target. Every linked file is still validated before filtering. `passed`, `failed`, `flaky`, `blocked`, `skipped`, and `error` remain separate. Without any linked runs, or when a case was omitted from the latest selected run, that case is `not-run`; groups excluded from TC selection are shown without selected cases. An empty selection does not become a passing result.
 
-Latest means the greatest reported `finishedAt`, then `startedAt`, then lexical run ID for ties. One whole run supplies all displayed case outcomes; earlier successes are never combined with newer runs to manufacture an all-passing result. When runs are linked, pending review and missing candidate context remain visible. These are supplied report outcomes, not review approval, independent execution proof, or evidence that the source issue is resolved.
+Latest means the greatest reported `finishedAt`, then `startedAt`, then lexical run ID for ties. Without a target filter, latest still means latest across all linked runs; summaries warn when histories contain multiple target fingerprints or runs without one. A target filter excludes unscoped runs, including older name-only files. One whole run supplies all displayed case outcomes; earlier successes are never combined with newer runs to manufacture an all-passing result. When runs are linked, pending review and missing candidate context remain visible. These are supplied report outcomes, not review approval, independent execution proof, or evidence that the source issue is resolved.
 
 The bundle and every linked JSON result are checked before output: schema, source/suite hashes, exact case/group/event mappings, statuses, and timestamps must agree. Invalid older runs also fail the request. The reader accepts up to 1,000 directory entries, 2 MiB per result file, and 64 MiB total result bytes. Non-JSON incidental files are ignored; malformed JSON filenames, symlinks, non-regular result files, and limit violations are rejected. `--out` requires a new file outside the bundle's `results` directory and never overwrites existing content. Analysis artifacts and linked results remain unchanged.
 
@@ -396,6 +397,10 @@ import { readRunSummary, renderRunSummary } from '@ihyeon/error-to-test';
 const summary = await readRunSummary('./analysis');
 console.log(summary.counts);
 console.log(renderRunSummary(summary));
+if (summary.targets.length) {
+  const targetSummary = await readRunSummary('./analysis', { targetFingerprint: summary.targets[0].fingerprint });
+  console.log(targetSummary.counts);
+}
 ```
 
 ### Fail CI on selected case outcomes
@@ -417,9 +422,9 @@ Choose exact values from `failed`, `flaky`, `blocked`, `skipped`, `error`, and `
 
 The full existing Markdown/JSON report is output or saved before returning `0` or `2`. A numeric gate summary goes to stderr; JSON stdout remains `error-to-test/run-summary-1` without gate fields. Output errors take precedence and produce exit `1` without a gate outcome; existing output files and bundle results are preserved.
 
-Only the case outcomes from the one latest linked run are evaluated. Historical failures are not combined with newer results, and the overall run status is not a separate gate condition. Without a linked run, selected cases are `not-run`: include `--fail-on not-run` if unexecuted cases should fail. A status you did not choose does not fail the gate, but an empty selection always does. Use `readiness` separately to check recorded context/review blockers before execution. Passing this policy does not approve cases, prove a browser ran, or resolve source errors.
+Only the case outcomes from the one latest linked run in the chosen scope are evaluated. Historical failures and outcomes from other targets are not combined with newer results, and the overall run status is not a separate gate condition. Without a linked run, selected cases are `not-run`: include `--fail-on not-run` if unexecuted cases should fail. A status you did not choose does not fail the gate, but an empty selection always does. Use `readiness` separately to check recorded context/review blockers before execution. Passing this policy does not approve cases, prove a browser ran, or resolve source errors.
 
-Omitting `--fail-on` preserves the existing results behavior and exit codes. The option is results-only; APIs and saved summary schemas are unchanged. API callers can apply their own policy to the `counts` returned by `await readRunSummary(directory)`.
+Omitting `--fail-on` preserves the existing results behavior and exit codes. Both `--fail-on` and `--target-fingerprint` are results-only. The summary keeps `error-to-test/run-summary-1` with additive target inventory and scope fields. API callers can apply their own policy to the `counts` returned by `await readRunSummary(directory, { targetFingerprint })`.
 
 ## Data handling and checks
 

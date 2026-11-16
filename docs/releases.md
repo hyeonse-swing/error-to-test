@@ -2,6 +2,16 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.3.0 — target-scoped linked results
+
+Linked Flow QA results now retain an optional SHA-256 `targetFingerprint` calculated from Flow QA's exact canonical web or mobile target identity. Target names are sanitized labels; two targets can use the same name. Raw target fields are scrubbed from linked names and reasons. A fingerprint is a stable, guessable identifier rather than anonymization. The linker validates the target kind and required fields before writing. Flow QA's early error/interrupted report with an empty web URL, and blocked/interrupted mobile report with an empty device, remain linkable with a sanitized name but no invented fingerprint; other incomplete target/status combinations are rejected.
+
+`results --target-fingerprint SHA256` and `readRunSummary(directory, { targetFingerprint })` select one target's latest run and case counts, including `--fail-on` decisions. Unfiltered results still use the latest run across all targets. Summaries list fingerprinted targets, their sanitized names and run counts, and the number of unscoped runs; scoped summaries also report excluded runs. Legacy full and partial files, targetless reports, and early fallback reports without a fingerprint remain readable but cannot join a target scope. Unknown fingerprints fail rather than producing a passing gate. Every linked file is validated before scope selection, including older and nonselected files. New additive fields keep the `error-to-test/results-1` and `error-to-test/run-summary-1` schema labels; older readers reject new linked files that contain the fingerprint.
+
+The ecosystem smoke also exercises same-name distinct target URLs and a real Flow QA unresolved-target error. To include the standalone SQLite collector, set `BROWSER_ERROR_LOG_MICRO_DIRECTORY` to a built or extracted micro-server directory containing `server.mjs` and `export.mjs`; the smoke stores captured SDK events, stops the collector, verifies a read-only export, and analyzes that export through the installed CLI.
+
+Local checks on 2026-11-16: `npm run check` passed type checking, build, and 203 tests; `npm run check:package` passed the isolated package consumer smoke.
+
 ## 0.2.8
 
 Restores compatibility with Browser Error Log resource events across input, CLI, profiles, comparisons and refinement, and with Flow QA selected-run reports. Valid v1 network status values (0..599) are preserved; values below 100 are described as unavailable HTTP status rather than a response.

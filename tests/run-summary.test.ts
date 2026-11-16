@@ -127,6 +127,78 @@ test('latest selected run does not inherit earlier full results, and a later ful
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('target scopes distinguish reused names, exclude legacy runs, and validate every nonselected file', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-summary-targets-'));
+  try {
+    const { out, provenance } = await makeBundle(temp, true);
+    const [first, second] = provenance.mappings.map((item: { caseId: string }) => item.caseId);
+    const targetA = { name: 'Stage', url: 'https://example.test/private-a?token=secret-a' };
+    const targetB = { name: 'Stage', kind: 'web', url: 'https://example.test/private-b?token=secret-b' };
+    const aFull = await linkFlowQaReport(out, report(provenance, ['passed', 'passed'], {
+      target: targetA, status: 'passed', finishedAt: '2026-10-13T00:01:00Z',
+    }));
+    const aFingerprint = JSON.parse(await readFile(aFull, 'utf8')).targetFingerprint as string;
+    await linkFlowQaReport(out, report(provenance, [], {
+      target: targetA, status: 'passed', startedAt: '2026-10-14T00:00:00Z', finishedAt: '2026-10-14T00:01:00Z',
+      cases: [{ id: first, status: 'passed' }], selection: { caseIds: [first], totalCases: 2 },
+    }));
+    const bFull = await linkFlowQaReport(out, report(provenance, ['passed', 'passed'], {
+      target: targetB, status: 'passed', startedAt: '2026-10-15T00:00:00Z', finishedAt: '2026-10-15T00:01:00Z',
+    }));
+    const bOriginal = await readFile(bFull, 'utf8');
+    const bFingerprint = JSON.parse(bOriginal).targetFingerprint as string;
+    await linkFlowQaReport(out, report(provenance, ['blocked', 'blocked'], {
+      startedAt: '2026-10-16T00:00:00Z', finishedAt: '2026-10-16T00:01:00Z',
+    }));
+    const nameOnly = await linkFlowQaReport(out, report(provenance, ['failed', 'passed'], {
+      target: targetA, status: 'failed', startedAt: '2026-10-17T00:00:00Z', finishedAt: '2026-10-17T00:01:00Z',
+    }));
+    const oldFormat = JSON.parse(await readFile(nameOnly, 'utf8'));
+    delete oldFormat.targetFingerprint;
+    await writeFile(nameOnly, JSON.stringify(oldFormat));
+
+    const global = await readRunSummary(out);
+    assert.equal(global.runCount, 5);
+    assert.equal(global.unscopedRunCount, 2);
+    assert.equal(global.latestRun?.targetName, 'Stage');
+    assert.equal(global.latestRun?.targetFingerprint, undefined);
+    assert.equal(global.targets.length, 2);
+    assert.deepEqual(global.targets.find(target => target.fingerprint === aFingerprint), { fingerprint: aFingerprint, names: ['Stage'], runCount: 2 });
+    assert.deepEqual(global.targets.find(target => target.fingerprint === bFingerprint), { fingerprint: bFingerprint, names: ['Stage'], runCount: 1 });
+    assert.match(global.warnings.join('\n'), /contains 2 target fingerprints/);
+    assert.match(global.warnings.join('\n'), /2 linked run\(s\) have no target fingerprint/);
+
+    const a = await readRunSummary(out, { targetFingerprint: aFingerprint });
+    assert.equal(a.selectedTargetFingerprint, aFingerprint);
+    assert.equal(a.runCount, 2);
+    assert.equal(a.excludedRunCount, 3);
+    assert.equal(a.unscopedRunCount, 2);
+    assert.deepEqual(a.groups[0]!.cases.map(item => [item.caseId, item.status]), [[first, 'passed'], [second, 'not-run']]);
+    assert.equal(a.counts['not-run'], 1);
+    assert.equal(a.latestRun?.targetFingerprint, aFingerprint);
+    assert.match(a.warnings.join('\n'), /excludes 3 linked run\(s\), including 2 unscoped/);
+    const b = await readRunSummary(out, { targetFingerprint: bFingerprint });
+    assert.equal(b.runCount, 1);
+    assert.deepEqual(b.groups[0]!.cases.map(item => item.status), ['passed', 'passed']);
+    assert.equal(b.counts['not-run'], 0);
+    for (const output of [JSON.stringify(a), renderRunSummary(a), JSON.stringify(global), renderRunSummary(global)]) {
+      for (const secret of ['private-a', 'private-b', 'secret-a', 'secret-b']) assert.ok(!output.includes(secret));
+    }
+    assert.match(renderRunSummary(global), /Available targets/);
+    assert.match(renderRunSummary(a), /Selected target fingerprint/);
+
+    await assert.rejects(readRunSummary(out, { targetFingerprint: 'F'.repeat(64) }), /lowercase SHA-256 fingerprint/);
+    await assert.rejects(readRunSummary(out, { targetFingerprint: 'f'.repeat(64) }), /No linked runs match/);
+    await assert.rejects(readRunSummary(out, { targetFingerpint: aFingerprint } as any), /support only targetFingerprint/);
+    const tampered = JSON.parse(bOriginal);
+    tampered.targetFingerprint = 'A'.repeat(64);
+    await writeFile(bFull, JSON.stringify(tampered));
+    await assert.rejects(readRunSummary(out, { targetFingerprint: aFingerprint }), /lowercase SHA-256 fingerprint/);
+    await writeFile(bFull, bOriginal);
+    assert.equal((await readRunSummary(out, { targetFingerprint: aFingerprint })).runCount, 2);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('selected linked result scope is validated against the full provenance even when another run is newer', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-summary-selected-tamper-'));
   try {

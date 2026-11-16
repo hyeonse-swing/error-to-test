@@ -30,7 +30,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
   error-to-test issue new-directory --group GROUP_ID [--out issue.md]
   error-to-test link-run new-directory --report path/to/qa-report.json
-  error-to-test results new-directory [--format text|json] [--out summary.md] [--fail-on STATUS ...]
+  error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
@@ -40,6 +40,7 @@ Options:
   --format auto|json|jsonl|text Analyze input format; JSONL requires explicit selection and one record per line; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
   --fail-on STATUS        Results gate: failed|flaky|blocked|skipped|error|not-run (repeatable; exit 2 on a match or no selected cases, 1 on error)
+  --target-fingerprint SHA256  Scope results and gate to this target's 64-character lowercase SHA-256 fingerprint
   --format text|json      Compare format (default: text Markdown)
   --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
@@ -153,7 +154,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'target-fingerprint': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -239,7 +240,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command === 'results') {
     if (positionals.length !== 2 || !positionals[1]) throw new Error('results requires one bundle directory.');
-    if (Object.keys(values).some(key => !['format', 'out', 'fail-on', 'help'].includes(key))) throw new Error('Unsupported option for results. Use only --format text|json, --out FILE, and --fail-on STATUS.');
+    if (Object.keys(values).some(key => !['format', 'out', 'fail-on', 'target-fingerprint', 'help'].includes(key))) throw new Error('Unsupported option for results. Use only --format text|json, --out FILE, --target-fingerprint SHA256, and --fail-on STATUS.');
     const format = values.format ?? 'text';
     if (format !== 'text' && format !== 'json') throw new Error('results --format must be text or json.');
     const requestedStatuses = values['fail-on'];
@@ -248,7 +249,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     }
     const failOn = requestedStatuses === undefined ? undefined : resultsGateStatuses.filter(status => requestedStatuses.includes(status));
     const bundle = resolve(positionals[1]);
-    const summary = await readRunSummary(bundle);
+    const summary = await readRunSummary(bundle, { targetFingerprint: values['target-fingerprint'] });
     const content = format === 'json' ? jsonText(summary) : renderRunSummary(summary);
     if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The results summary exceeds 64 MiB. Narrow the bundle before requesting output.');
     const finishGate = () => {
@@ -356,6 +357,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, link-run, results, compare, or readiness. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
+  if (values['target-fingerprint'] !== undefined) throw new Error('--target-fingerprint applies to results only.');
   if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');

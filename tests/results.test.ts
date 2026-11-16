@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { analyzeErrors, writeBundle, linkFlowQaReport } from '../src/index.ts';
+import { createHash, randomUUID } from 'node:crypto';
+import { analyzeErrors, writeBundle, linkFlowQaReport, readRunSummary } from '../src/index.ts';
 import { jsonText } from '../src/artifacts.ts';
 
 test('run linkage binds exact suite/cases, redacts reasons, preserves old results and never closes issues', async () => {
@@ -50,7 +50,7 @@ test('Flow QA selected reports require an exact proper subset declaration', asyn
     await writeBundle(out, analysis);
     const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
     const [first, second, third] = provenance.mappings.map((item: { caseId: string }) => item.caseId);
-    const cases = [first, third].map(id => ({ id, status: 'passed' }));
+    const cases = [first, third].map(id => ({ id, status: 'passed', reason: 'At https://example.test/private?token=url-secret' }));
     const report = {
       schemaVersion: 'flow-qa/report-1', runId: randomUUID(), suiteHash: provenance.suiteSha256,
       startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z', status: 'passed', cases,
@@ -60,6 +60,9 @@ test('Flow QA selected reports require an exact proper subset declaration', asyn
     const path = await linkFlowQaReport(out, report);
     const linked = JSON.parse(await readFile(path, 'utf8'));
     assert.equal(linked.targetName, 'Stage token=[redacted] [redacted-url] prod_[redacted-url]');
+    assert.equal(linked.targetFingerprint, createHash('sha256').update(JSON.stringify({
+      kind: 'web', url: report.target.url,
+    })).digest('hex'));
     assert.ok(!JSON.stringify(linked).includes('name-secret'));
     assert.ok(!JSON.stringify(linked).includes('name-private'));
     assert.ok(!JSON.stringify(linked).includes('url-secret'));
@@ -86,5 +89,89 @@ test('Flow QA selected reports require an exact proper subset declaration', asyn
     await assert.rejects(linkFlowQaReport(out, { ...report, runId: randomUUID(), selection: { caseIds: [], totalCases: 3 } }), /selected case IDs/);
     await assert.rejects(linkFlowQaReport(out, { ...report, runId: randomUUID(),
       cases: provenance.mappings.map((item: { caseId: string }) => ({ id: item.caseId, status: 'passed' })) }), /totalCases/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('target identities match Flow QA canonical mobile fields and reject unsupported target shapes before writing', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-target-results-'));
+  try {
+    const out = join(temp, 'bundle');
+    await writeBundle(out, analyzeErrors('Error: observed'));
+    const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    const base = {
+      schemaVersion: 'flow-qa/report-1', suiteHash: provenance.suiteSha256,
+      startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z', status: 'passed',
+      cases: provenance.mappings.map((item: { caseId: string }) => ({ id: item.caseId, status: 'passed', reason: 'Ran on private-device-123 for com.secret.customer' })),
+    };
+    const mobile = { name: 'Stage private-device-123 com.secret.customer', kind: 'mobile', platform: 'ios', bundleId: 'com.secret.customer', device: 'private-device-123' };
+    const file = await linkFlowQaReport(out, { ...base, runId: randomUUID(), target: mobile });
+    const content = await readFile(file, 'utf8');
+    const result = JSON.parse(content);
+    assert.equal(result.targetFingerprint, createHash('sha256').update(JSON.stringify({
+      kind: 'mobile', platform: mobile.platform, bundleId: mobile.bundleId, device: mobile.device,
+    })).digest('hex'));
+    assert.equal(result.targetName, 'Stage [redacted-target] [redacted-target]');
+    assert.ok(!content.includes('com.secret.customer'));
+    assert.ok(!content.includes('private-device-123'));
+    const invalid = [
+      null, { name: 'Stage', kind: 'desktop', url: 'https://example.test' },
+      { name: 'Stage', kind: 'web' }, { name: 'Stage', url: 'javascript:alert(1)' },
+      { name: 'Stage', url: 'https://example.test', device: 'unexpected' },
+      { name: 'Stage', kind: 'mobile', platform: 'windows', bundleId: 'com.example', device: 'phone' },
+      { name: 'Stage', kind: 'mobile', platform: 'ios', bundleId: 'com.example' },
+      { kind: 'mobile', platform: 'ios', bundleId: 'com.example', device: 'phone' },
+    ];
+    for (const target of invalid) {
+      await assert.rejects(linkFlowQaReport(out, { ...base, runId: randomUUID(), target }), /report\.target/);
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('Flow QA early failure target placeholders link as unscoped only for their fallback statuses', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-target-fallback-'));
+  try {
+    const out = join(temp, 'bundle');
+    await writeBundle(out, analyzeErrors('Error: observed'));
+    const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    // These target shapes come from Flow QA engine's initial target and missing-device branch;
+    // failureReport enumerates every case with the fallback run status.
+    const web = { name: 'Stage https://private.example/path?token=secret', url: '' };
+    const mobile = { name: 'Stage com.private.app', kind: 'mobile', platform: 'ios', bundleId: 'com.private.app', device: '' };
+    const fallbackReport = (target: object, status: string) => ({
+      schemaVersion: 'flow-qa/report-1', runId: randomUUID(), suiteId: 'suite', suiteHash: provenance.suiteSha256,
+      target, startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z', status,
+      cases: provenance.mappings.map((item: { caseId: string }) => ({
+        id: item.caseId, title: 'Observed error', status: status === 'blocked' ? 'blocked' : 'error',
+        expected: [], attempts: [], reason: target === mobile ? 'Could not start com.private.app' : 'Early configuration failure',
+      })),
+      errors: status === 'blocked' ? [] : ['Could not start'],
+    });
+    for (const [target, status, expectedName] of [
+      [web, 'error', 'Stage [redacted-url]'],
+      [web, 'interrupted', 'Stage [redacted-url]'],
+      [mobile, 'blocked', 'Stage [redacted-target]'],
+      [mobile, 'interrupted', 'Stage [redacted-target]'],
+    ] as const) {
+      const file = await linkFlowQaReport(out, fallbackReport(target, status));
+      const content = await readFile(file, 'utf8');
+      const linked = JSON.parse(content);
+      assert.equal(linked.targetName, expectedName);
+      assert.ok(!Object.hasOwn(linked, 'targetFingerprint'));
+      assert.ok(!content.includes('private.example'));
+      assert.ok(!content.includes('com.private.app'));
+    }
+    const summary = await readRunSummary(out);
+    assert.equal(summary.runCount, 4);
+    assert.equal(summary.unscopedRunCount, 4);
+    assert.deepEqual(summary.targets, []);
+    assert.match(summary.warnings.join('\n'), /4 linked run\(s\) have no target fingerprint/);
+    for (const [target, status] of [
+      [mobile, 'error'], [mobile, 'passed'], [web, 'blocked'], [web, 'passed'],
+      [{ ...web, kind: 'web' }, 'error'], [{ ...web, url: ' ' }, 'error'],
+      [{ ...mobile, bundleId: '' }, 'blocked'], [{ ...mobile, device: undefined }, 'blocked'],
+    ] as const) {
+      await assert.rejects(linkFlowQaReport(out, fallbackReport(target, status)), /report\.target/);
+    }
+    assert.equal((await readRunSummary(out)).runCount, 4);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });

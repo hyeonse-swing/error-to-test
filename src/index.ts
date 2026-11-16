@@ -8,7 +8,7 @@ export { readIssueReport } from './issue-report.ts';
 export { linkFlowQaReport } from './results.ts';
 export { createProfileTemplate, type ProfileTemplateOptions } from './profile-template.ts';
 export { refineBundle } from './refinement.ts';
-export { readRunSummary, renderRunSummary, type RunSummary, type LinkedRunStatus, type LinkedCaseStatus } from './run-summary.ts';
+export { readRunSummary, renderRunSummary, type RunSummary, type ReadRunSummaryOptions, type LinkedRunStatus, type LinkedCaseStatus } from './run-summary.ts';
 export { readReadiness, renderReadiness, type ReadinessSummary } from './readiness.ts';
 export { compareBundles, renderComparison, type AnalysisComparison, type ComparisonStatus, type ComparisonSide, type ComparisonOccurrence, type ComparisonIssue } from './comparison.ts';
 export type * from './types.ts';

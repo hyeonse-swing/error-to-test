@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Exact public consumer versions: update deliberately when auditing a new pair.
-const versions = { browserErrorLog: '0.2.10', flowQa: '0.8.8' };
+const versions = { browserErrorLog: '0.2.11', flowQa: '0.8.9' };
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = join(root, 'output/ecosystem');
 const temp = await mkdtemp(join(tmpdir(), 'error-to-test-ecosystem-'));
@@ -32,6 +33,59 @@ async function command(file, args, { cwd = consumer, allowed = [0], timeout = 18
       else accept({ code, stdout, stderr });
     });
   });
+}
+
+async function sqliteExport(events, origin, destination) {
+  const directory = resolve(process.env.BROWSER_ERROR_LOG_MICRO_DIRECTORY);
+  const data = join(temp, 'micro-data');
+  const probe = createServer();
+  await new Promise((accept, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', accept); });
+  const port = probe.address().port;
+  await new Promise(accept => probe.close(accept));
+  const cleanEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('MICRO_')));
+  const collector = spawn(process.execPath, [join(directory, 'server.mjs')], {
+    cwd: consumer, stdio: ['ignore', 'ignore', 'pipe'],
+    env: { ...cleanEnvironment, MICRO_HOST: '127.0.0.1', MICRO_PORT: String(port), MICRO_STORAGE: 'sqlite',
+      MICRO_DATA_DIR: data, MICRO_PROJECTS: 'ecosystem', MICRO_ALLOWED_ORIGINS: origin,
+      MICRO_VIEWER_PASSWORD: randomBytes(24).toString('hex') },
+  });
+  let diagnostics = '';
+  collector.stderr.on('data', chunk => { diagnostics = (diagnostics + chunk).slice(-2000); });
+  let spawnError;
+  collector.on('error', error => { spawnError = error; });
+  try {
+    const endpoint = `http://127.0.0.1:${port}`;
+    let ready = false;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (spawnError) throw spawnError;
+      if (collector.exitCode !== null) throw new Error(`Micro collector exited: ${diagnostics}`);
+      try { ready = (await fetch(endpoint + '/api/health', { signal: AbortSignal.timeout(1000) })).ok; } catch { /* Wait for local listener. */ }
+      if (ready) break;
+      await new Promise(accept => setTimeout(accept, 100));
+    }
+    assert.ok(ready, 'Micro collector did not start');
+    const response = await fetch(endpoint + '/api/events', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ schemaVersion: 1, events }), signal: AbortSignal.timeout(5000) });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).stored, events.length);
+  } finally {
+    if (collector.exitCode === null && collector.signalCode === null && !spawnError) {
+      const stopped = new Promise(accept => collector.once('exit', accept));
+      collector.kill('SIGTERM');
+      const force = setTimeout(() => collector.kill('SIGKILL'), 12000);
+      await stopped; clearTimeout(force);
+    }
+  }
+  const database = join(data, 'events.sqlite');
+  const hash = async () => createHash('sha256').update(await readFile(database)).digest('hex');
+  const before = await hash();
+  await command(process.execPath, [join(directory, 'export.mjs'), data, destination]);
+  assert.equal(await hash(), before, 'Export changed the source database');
+  const exported = JSON.parse(await readFile(destination, 'utf8'));
+  assert.equal(exported.partial, true);
+  assert.deepEqual(exported.events.map(event => event.eventId).sort(), events.map(event => event.eventId).sort());
+  evidence.checks.push('real SDK events persist through standalone SQLite collector and read-only export into verified Error-to-Test bundle');
 }
 
 try {
@@ -109,10 +163,10 @@ try {
       targets: { fixture: { url: targetURL } }, timeoutMs: 1500, retries: 0 }));
     return JSON.parse(await readFile(join(directory, 'cases/error-to-test.json'), 'utf8'));
   }
-  async function run(directory, expectedStatus, caseId) {
+  async function run(directory, expectedStatus, caseId, targetName = 'fixture') {
     const runsRoot = join(directory, '.flowqa/runs');
     const before = await readdir(runsRoot).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
-    await command(flow, ['run', 'cases/error-to-test.json', '--workspace', directory, '--target', 'fixture', ...(caseId ? ['--case', caseId] : [])], { allowed: expectedStatus === 'passed' ? [0] : [1] });
+    await command(flow, ['run', 'cases/error-to-test.json', '--workspace', directory, '--target', targetName, ...(caseId ? ['--case', caseId] : [])], { allowed: expectedStatus === 'passed' ? [0] : [1] });
     const added = (await readdir(runsRoot)).filter(name => /^[0-9a-f-]{36}$/.test(name) && !before.includes(name));
     assert.equal(added.length, 1);
     const path = join(runsRoot, added[0], 'qa-report.json');
@@ -127,7 +181,8 @@ try {
   assert.equal(captured.length, 2);
   assert.deepEqual(captured.map(event => event.type).sort(), ['javascript', 'resource']);
   const input = join(temp, 'captured.json');
-  await writeFile(input, JSON.stringify({ schemaVersion: 1, partial: true, events: captured }));
+  if (process.env.BROWSER_ERROR_LOG_MICRO_DIRECTORY) await sqliteExport(captured, targetURL, input);
+  else await writeFile(input, JSON.stringify({ schemaVersion: 1, partial: true, events: captured }));
   evidence.checks.push('published SDK captures JavaScript and resource failures in Chromium');
   const pending = join(temp, 'pending');
   await analyze(input, pending, false);
@@ -151,6 +206,50 @@ try {
   assert.equal(summary.counts['not-run'], 1);
   assert.ok(summary.warnings.some(warning => /partial|selected|not-run/i.test(warning)));
   evidence.checks.push('selected run linked with target name; omitted case not-run; not-run gate fails even after prior full pass');
+  const originalFingerprint = createHash('sha256').update(JSON.stringify({ kind: 'web', url: targetURL })).digest('hex');
+  assert.equal(summary.latestRun.targetFingerprint, originalFingerprint);
+  // Reuse the label for a different actual URL: labels must not combine target histories.
+  const alternateURL = targetURL + '/alternate';
+  await writeFile(join(reviewed, 'flowqa.config.json'), JSON.stringify({ schemaVersion: 'flow-qa/config-1',
+    targets: { fixture: { url: alternateURL } }, timeoutMs: 1500, retries: 0 }));
+  fixed = false;
+  const alternate = await run(reviewed, 'failed');
+  const mixed = JSON.parse((await command(ett, ['results', reviewed, '--format', 'json'])).stdout);
+  assert.equal(mixed.targets.length, 2);
+  assert.equal(mixed.latestRun.runId, alternate.runId);
+  assert.equal(mixed.counts.failed, 2);
+  assert.ok(mixed.warnings.some(warning => /multiple|mixed|different|target fingerprints/i.test(warning)));
+  const scopedGate = await command(ett, ['results', reviewed, '--format', 'json', '--target-fingerprint', originalFingerprint, '--fail-on', 'not-run'], { allowed: [2] });
+  const scoped = JSON.parse(scopedGate.stdout);
+  assert.equal(scoped.latestRun.runId, selected.runId);
+  assert.equal(scoped.selectedTargetFingerprint, originalFingerprint);
+  assert.equal(scoped.counts.passed, 1);
+  assert.equal(scoped.counts['not-run'], 1);
+  assert.equal(scoped.counts.failed, 0);
+  assert.equal(scoped.excludedRunCount, 1);
+  assert.ok(scoped.targets.every(target => target.names.includes('fixture')));
+  const alternateFingerprint = createHash('sha256').update(JSON.stringify({ kind: 'web', url: alternateURL })).digest('hex');
+  const failedTarget = JSON.parse((await command(ett, ['results', reviewed, '--format', 'json', '--target-fingerprint', alternateFingerprint, '--fail-on', 'failed'], { allowed: [2] })).stdout);
+  assert.equal(failedTarget.counts.failed, 2);
+  await command(ett, ['results', reviewed, '--target-fingerprint', '0'.repeat(64)], { allowed: [1] });
+  assert.ok(!JSON.stringify(scoped).includes(targetURL), 'Scoped summaries must not persist raw target URLs.');
+  for (const name of await readdir(join(reviewed, 'results'))) {
+    if (name.endsWith('.json')) assert.ok(!(await readFile(join(reviewed, 'results', name), 'utf8')).includes(targetURL));
+  }
+  evidence.checks.push('same-name distinct URLs stay isolated by canonical fingerprint; scoped latest and gates exclude other targets; unknown scopes reject');
+  const unresolved = await run(reviewed, 'error', undefined, 'not-configured');
+  assert.equal(unresolved.target.url, '');
+  const withFallback = JSON.parse((await command(ett, ['results', reviewed, '--format', 'json'])).stdout);
+  assert.equal(withFallback.unscopedRunCount, 1);
+  assert.equal(withFallback.latestRun.runId, unresolved.runId);
+  assert.equal(withFallback.latestRun.targetFingerprint, undefined);
+  const scopedAfterError = JSON.parse((await command(ett, ['results', reviewed, '--format', 'json', '--target-fingerprint', originalFingerprint])).stdout);
+  assert.equal(scopedAfterError.latestRun.runId, selected.runId);
+  assert.equal(scopedAfterError.excludedRunCount, 2);
+  evidence.checks.push('real Flow QA unresolved-target error report remains linkable and unscoped without changing scoped outcomes');
+
+  fixed = true;
+
   const jsonl = join(temp, 'captured.jsonl');
   await writeFile(jsonl, captured.slice(0, 2).map(event => JSON.stringify(event)).join('\n'));
   await analyze(jsonl, join(temp, 'jsonl'), true, ['--format', 'jsonl']);
