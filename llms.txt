@@ -1,0 +1,8 @@
+# Error to Test
+
+> Local, deterministic browser-error analysis and traceable regression test candidates. No built-in AI calls or browser execution.
+
+- [AI-assisted workflow](docs/ai.md): portable assistant skill, evidence boundaries, and handoff.
+- [Portable skill](skills/error-to-test/SKILL.md): copy the entire folder, including its reference.
+- [English guide](README.md): CLI, schemas, API, verification, and result interpretation.
+- [한국어 안내](README.ko.md): 한국어 사용법과 검증 범위.

@@ -15,6 +15,9 @@ try {
   assert.ok(packed[0].files.some(file => file.path === 'dist/coverage.js'));
   assert.deepEqual(packed[0].files.filter(file => file.path.startsWith('bin/')).map(file => file.path), ['bin/error-to-test.mjs']);
   assert.ok(packed[0].files.some(file => file.path === 'docs/releases.md'));
+  for (const path of ['docs/ai.md', 'llms.txt', 'skills/error-to-test/SKILL.md', 'skills/error-to-test/references/workflow.md']) {
+    assert.ok(packed[0].files.some(file => file.path === path), `Missing bundled AI artifact: ${path}`);
+  }
   await writeFile(join(temp, 'package.json'), '{"type":"module","private":true}\n');
   execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', join(temp, 'cache'), join(temp, packed[0].filename)], { cwd: temp, stdio: 'pipe', env: npmEnvironment });
   const consumer = `import assert from 'node:assert/strict';\nimport { analyzeErrors, createProfileTemplate, exportFlowQa } from '@ihyeon/error-to-test';\nconst analysis=analyzeErrors('TypeError: missing item');\nassert.equal(analysis.candidates.length,1);\nassert.ok(exportFlowQa(analysis).suite.cases[0].questions.length);\nconst profile=createProfileTemplate(analysis);\nassert.equal(profile.scenarios[0].match.groupId,analysis.groups[0].id);\nassert.equal(profile.scenarios[0].requirement,'');\nassert.equal(profile.scenarios[0].setupConfirmed,false);\n`;
@@ -28,6 +31,9 @@ try {
     assert.equal(output, `${installedManifest.version}\n`);
   }
   const installedRoot = join(temp, 'node_modules/@ihyeon/error-to-test');
+  const installedSkill = await readFile(join(installedRoot, 'skills/error-to-test/SKILL.md'), 'utf8');
+  assert.match(installedSkill, /references\/workflow\.md/);
+  assert.ok((await readFile(join(installedRoot, 'skills/error-to-test/references/workflow.md'), 'utf8')).includes('error-to-test analyze'));
   const runCli = args => execFileSync(join(temp, 'node_modules/.bin/error-to-test'), args, { cwd: temp, encoding: 'utf8', stdio: 'pipe', timeout: 30_000 });
   const errorFile = join(temp, 'observed-error.txt');
   const initial = join(temp, 'initial');

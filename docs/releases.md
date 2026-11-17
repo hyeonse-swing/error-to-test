@@ -2,6 +2,12 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.1 — portable AI integration guidance
+
+The npm package now contains `skills/error-to-test/` with a portable skill and focused workflow reference, `docs/ai.md`, and `llms.txt`. README examples explain copying the entire skill folder from the installed package into a project-local agent directory. The guide preserves source verification, missing-expectation blockers, explicit review, observed-group coverage, and target-scoped result interpretation. No runtime API or result schema changes are introduced.
+
+Local checks passed the 206-test suite, type checking/build, skill validation, and an installed tarball CLI/API walkthrough. The package smoke asserts the skill/reference/guide/index are present in the installed consumer. Remote release jobs and public registry contents are verified separately for the final source.
+
 ## 0.4.0 — observed error group coverage
 
 `coverage` and the `readCoverage(directory)` API account for every group observed in a verified saved input, including groups excluded from TC selection by a baseline, explicit group filter, minimum count, or top-N limit. The read-only `error-to-test/coverage-1` report separates `unselected`, `blocked`, and `review-ready` groups, preserves source hashes and source-frequency meaning, and gives reason codes and next actions without copying raw error messages or question text. Only an explicit `--group` exclusion can be named precisely from old saved metadata; other unselected groups remain `not-selected-in-saved-bundle`. A group with multiple selected candidates is review-ready only if every case has no recorded blocker and review was acknowledged. Review readiness is not browser execution, a passing assertion, or production coverage. Existing `readiness` and results contracts and exit codes are unchanged.
