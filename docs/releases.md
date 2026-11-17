@@ -2,6 +2,12 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.2 — supported assertions for copied skills
+
+A new-project trial using only the copied skill reached real error collection, reviewed candidates, and a failing browser QA run, but the consumer guessed an unsupported `assertEnabled` step. The portable skill now links a focused web-step reference with accepted shapes, locator types, model-dependent steps, and explicit handling of requirements outside fixed assertions. The workflow also clarifies preserving both the suite and its source flow when selecting a Flow QA workspace. Runtime APIs and schemas are unchanged.
+
+The documented JSON example was parsed by the existing step validator. Skill validation and the installed-package smoke include the new reference; the end-to-end trial retains actual input/suite hashes and separate evidence for assertions outside the native case. Remote CI and published-package verification are recorded separately.
+
 ## 0.4.1 — portable AI integration guidance
 
 The npm package now contains `skills/error-to-test/` with a portable skill and focused workflow reference, `docs/ai.md`, and `llms.txt`. README examples explain copying the entire skill folder from the installed package into a project-local agent directory. The guide preserves source verification, missing-expectation blockers, explicit review, observed-group coverage, and target-scoped result interpretation. No runtime API or result schema changes are introduced.

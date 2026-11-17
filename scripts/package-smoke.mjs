@@ -15,7 +15,7 @@ try {
   assert.ok(packed[0].files.some(file => file.path === 'dist/coverage.js'));
   assert.deepEqual(packed[0].files.filter(file => file.path.startsWith('bin/')).map(file => file.path), ['bin/error-to-test.mjs']);
   assert.ok(packed[0].files.some(file => file.path === 'docs/releases.md'));
-  for (const path of ['docs/ai.md', 'llms.txt', 'skills/error-to-test/SKILL.md', 'skills/error-to-test/references/workflow.md']) {
+  for (const path of ['docs/ai.md', 'llms.txt', 'skills/error-to-test/SKILL.md', 'skills/error-to-test/references/workflow.md', 'skills/error-to-test/references/web-steps.md']) {
     assert.ok(packed[0].files.some(file => file.path === path), `Missing bundled AI artifact: ${path}`);
   }
   await writeFile(join(temp, 'package.json'), '{"type":"module","private":true}\n');
