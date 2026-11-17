@@ -11,6 +11,7 @@ import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
 import { readRunSummary, renderRunSummary } from './run-summary.ts';
 import { readReadiness, renderReadiness } from './readiness.ts';
+import { readCoverage, renderCoverage } from './coverage.ts';
 import { refineBundle } from './refinement.ts';
 import { readIssueReport } from './issue-report.ts';
 import type { Analysis, EventType, Runtime } from './types.ts';
@@ -32,6 +33,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
+  error-to-test coverage new-directory [--format text|json]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
 Options:
@@ -43,6 +45,7 @@ Options:
   --target-fingerprint SHA256  Scope results and gate to this target's 64-character lowercase SHA-256 fingerprint
   --format text|json      Compare format (default: text Markdown)
   --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
+  --format text|json      Observed group coverage format (default: text Markdown; read-only, no gate)
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
   --profile FILE         Replacement profile for the bundle's previously selected groups (refine; required)
   --baseline DIRECTORY   Select only signatures absent from this verified bundle, before --min-count and --top; retain all groups in analysis.json (analyze only)
@@ -165,7 +168,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, link-run, results, compare, or readiness. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, or coverage. See --help.');
     process.stdout.write(help);
     return;
   }
@@ -297,6 +300,17 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     if (summary.status !== 'ready') process.exitCode = 2;
     return;
   }
+  if (command === 'coverage') {
+    if (positionals.length !== 2 || !positionals[1]?.trim()) throw new Error('coverage requires one bundle directory.');
+    if (Object.keys(values).some(key => !['format', 'help'].includes(key))) throw new Error('Unsupported option for coverage. Use only --format text|json.');
+    const format = values.format ?? 'text';
+    if (format !== 'text' && format !== 'json') throw new Error('coverage --format must be text or json.');
+    const summary = await readCoverage(resolve(positionals[1]));
+    const content = format === 'json' ? jsonText(summary) : renderCoverage(summary);
+    if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The coverage summary exceeds 64 MiB. Narrow the bundle before requesting output.');
+    await writeGateOutput(content);
+    return;
+  }
   if (command === 'compare') {
     if (positionals.length !== 3 || !positionals[1] || !positionals[2]) throw new Error('compare requires BASELINE and CURRENT bundle directories.');
     if (Object.keys(values).some(key => !['format', 'out', 'max-new', 'help'].includes(key))) throw new Error('Unsupported option for compare. Use only --format text|json, --out FILE, and --max-new N.');
@@ -354,7 +368,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, link-run, results, compare, or readiness. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, or coverage. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
   if (values['target-fingerprint'] !== undefined) throw new Error('--target-fingerprint applies to results only.');

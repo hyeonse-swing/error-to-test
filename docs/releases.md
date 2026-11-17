@@ -2,6 +2,14 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.0 — observed error group coverage
+
+`coverage` and the `readCoverage(directory)` API account for every group observed in a verified saved input, including groups excluded from TC selection by a baseline, explicit group filter, minimum count, or top-N limit. The read-only `error-to-test/coverage-1` report separates `unselected`, `blocked`, and `review-ready` groups, preserves source hashes and source-frequency meaning, and gives reason codes and next actions without copying raw error messages or question text. Only an explicit `--group` exclusion can be named precisely from old saved metadata; other unselected groups remain `not-selected-in-saved-bundle`. A group with multiple selected candidates is review-ready only if every case has no recorded blocker and review was acknowledged. Review readiness is not browser execution, a passing assertion, or production coverage. Existing `readiness` and results contracts and exit codes are unchanged.
+
+The fresh installed-package ecosystem check pins Browser Error Log 0.2.12 and Flow QA 0.9.0; `BROWSER_ERROR_LOG_RELEASE_VERSION=X.Y.Z` allows a deliberate exact SDK compatibility check against a later patch. It checks that a manual SDK call returns the same event ID that the local fixture receives, then verifies coverage of pending, reviewed, and top-one selected snapshots. The SDK return ID is evidence of queue admission only; collector receipt is checked separately in this fixture. The check continues to use a local Chromium fixture and no model or customer service.
+
+Local checks on 2026-11-17: the final 0.4.0 candidate passed `npm run check` (type checking, build, 206 tests) and fresh installed-package `npm run check:package`. The installed-package ecosystem candidate passed 10 checks using the public SDK 0.2.12 and the Flow QA 0.9.0 tarball whose integrity matches the public release. Remote release and fully public consumer results are verified separately.
+
 ## 0.3.0 — target-scoped linked results
 
 Linked Flow QA results now retain an optional SHA-256 `targetFingerprint` calculated from Flow QA's exact canonical web or mobile target identity. Target names are sanitized labels; two targets can use the same name. Raw target fields are scrubbed from linked names and reasons. A fingerprint is a stable, guessable identifier rather than anonymization. The linker validates the target kind and required fields before writing. Flow QA's early error/interrupted report with an empty web URL, and blocked/interrupted mobile report with an empty device, remain linkable with a sanitized name but no invented fingerprint; other incomplete target/status combinations are rejected.
@@ -30,7 +38,7 @@ This minor release sets both package manifests to `0.2.0` before verification. T
 
 ## Automatic publication
 
-Pull requests and main pushes verify the package on Ubuntu and macOS. An additional Ubuntu job installs the current tarball with published Browser Error Log 0.2.10 and Flow QA 0.8.8, then checks the complete capture/analyze/run/link loop in Chromium. Both jobs must pass before a main push prepares an immutable release source:
+Pull requests and main pushes verify the package on Ubuntu and macOS. An additional Ubuntu job installs the current tarball with pinned Browser Error Log 0.2.12 and Flow QA 0.9.0, then checks the complete capture/analyze/run/link loop in Chromium. Both jobs must pass before a main push prepares an immutable release source:
 
 - The first publication uses the manifest version (`0.1.0`). A new npm package needs one authenticated bootstrap publication before its Trusted Publisher can be configured.
 - Changes to `src/`, `bin/`, `examples/`, `LICENSE`, `package.json`, `package-lock.json`, or `tsconfig.json` automatically increase patch when the manifest still matches npm latest. The workflow commits the version change as `github-actions[bot]` and publishes that exact commit in the same run.

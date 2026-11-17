@@ -12,6 +12,7 @@ try {
   const packed = JSON.parse(execFileSync('npm', ['pack', '--offline', '--ignore-scripts', '--json', '--cache', join(temp, 'cache'), '--pack-destination', temp], { cwd: root, encoding: 'utf8', env: npmEnvironment }));
   assert.ok(packed[0].files.every(file => !file.path.startsWith('node_modules/') && !file.path.startsWith('.error-to-test/')));
   assert.ok(packed[0].files.some(file => file.path === 'dist/index.js'));
+  assert.ok(packed[0].files.some(file => file.path === 'dist/coverage.js'));
   assert.deepEqual(packed[0].files.filter(file => file.path.startsWith('bin/')).map(file => file.path), ['bin/error-to-test.mjs']);
   assert.ok(packed[0].files.some(file => file.path === 'docs/releases.md'));
   await writeFile(join(temp, 'package.json'), '{"type":"module","private":true}\n');
@@ -255,6 +256,12 @@ try {
   assert.deepEqual(explicitAnalysis.coverage, focusedAnalysis.coverage);
   assert.deepEqual(explicitAnalysis.groupFilter, { groupIds: [explicitId] });
   assert.deepEqual(explicitAnalysis.candidates.map(candidate => candidate.groupId), [explicitId]);
+  const installedCoverage = JSON.parse(runCli(['coverage', explicit, '--format', 'json']));
+  assert.equal(installedCoverage.schemaVersion, 'error-to-test/coverage-1');
+  assert.deepEqual(installedCoverage.counts, { observedGroups: 2, selectedGroups: 1, unselectedGroups: 1, blockedGroups: 1, reviewReadyGroups: 0 });
+  assert.equal(installedCoverage.groups.find(group => group.groupId !== explicitId).status, 'unselected');
+  await writeFile(join(temp, 'coverage-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readCoverage,renderCoverage} from '@ihyeon/error-to-test';\nconst summary=await readCoverage(process.argv[2]);\nassert.equal(summary.counts.unselectedGroups,1);\nassert.match(renderCoverage(summary),/Unselected: 1/);\n`);
+  execFileSync(process.execPath, ['coverage-consumer.mjs', explicit], { cwd: temp, stdio: 'pipe' });
   assert.match(await readFile(join(explicit, 'report.md'), 'utf8'), /Explicit group selection/);
   assert.match(runCli(['verify', explicit, '--input', comparisonSources[1]]), /original input: checked/);
   assert.deepEqual(JSON.parse(runCli(['compare', comparisonBundles[0], explicit, '--format', 'json'])).counts, comparison.counts);
@@ -337,5 +344,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI issue report/results CI gate/refinement/group selection/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI issue report/results CI gate/refinement/group selection/coverage/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

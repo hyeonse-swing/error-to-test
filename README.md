@@ -346,6 +346,19 @@ console.log(renderReadiness(summary));
 // API calls return a summary; only the CLI assigns readiness exit codes.
 ```
 
+### Audit the saved TC selection scope
+
+`coverage` verifies a saved bundle and accounts for **every observed error group**, including groups without a selected TC. It reports `unselected`, `blocked`, or `review-ready` for each group, the selected case IDs, concise reason codes, and a next action. A group with several cases is `review-ready` only if every selected case has no recorded readiness blocker and review was acknowledged.
+
+```sh
+error-to-test coverage ./analysis
+error-to-test coverage ./analysis --format json
+```
+
+JSON uses `error-to-test/coverage-1`. `outside-explicit-group-filter` is exact when a saved `--group` list excludes the group. Otherwise `not-selected-in-saved-bundle` avoids guessing whether baseline, minimum count, or top-N removed it; inspect those original selection options and reanalyze the original input with the desired `--group`. Blocked reason codes distinguish pending review, missing context, and recorded case questions; run `readiness` for the actual questions. The command reads no linked results, writes no files, and exits `0` when a valid report is printed, even if groups are unselected or blocked. Invalid/stale bundles fail with `1`.
+
+The denominator is groups observed in the supplied saved input, **not** production errors, affected users, product flow coverage, or test execution. `review-ready` is a candidate state, not a passing test. Source collection and retention limits still apply. The API is `await readCoverage(directory)` and `renderCoverage(summary)`; it does not change `readiness` or its exit codes.
+
 ## JavaScript API
 
 ```js

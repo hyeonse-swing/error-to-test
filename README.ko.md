@@ -254,6 +254,17 @@ error-to-test readiness ./review-analysis --format json
 
 저장된 번들의 질문과 검토 상태를 점검하는 기능입니다. 브라우저 실행·계정·준비 데이터·수집 범위를 확인하거나 연결 실행 결과를 읽지는 않습니다. `--top`·`--min-count`·이전 분석 기준으로 제외된 묶음은 선택 TC 건수에 포함되지 않습니다. 검토 확인만으로 미해결 맥락이 사라지지 않으며, 빈 선택도 통과시키지 않습니다. 원본 입력·프로필 바이트 확인은 `verify --input ... --profile ...`로 별도 수행하세요. 번들 경로와 선택적인 `--format text|json`만 받으며 파일을 저장하거나 기존 TC를 승인하지 않습니다.
 
+`coverage`는 저장된 번들을 검증한 뒤 **관측된 오류 묶음 전체**를 `unselected`·`blocked`·`review-ready`로 나눠 보여줍니다. 묶음별 선택 TC ID, 간결한 사유 코드와 다음 행동이 포함됩니다. 여러 TC가 연결된 묶음은 모든 TC의 기록된 차단 사유가 없고 검토 확인이 끝나야 `review-ready`입니다.
+
+```sh
+error-to-test coverage ./review-analysis
+error-to-test coverage ./review-analysis --format json
+```
+
+JSON 스키마는 `error-to-test/coverage-1`입니다. `outside-explicit-group-filter`는 저장된 `--group` 목록 밖임을 정확히 나타냅니다. 그 밖의 미선택은 `not-selected-in-saved-bundle`로 표시합니다. 이전 번들에는 `--top`·`--min-count` 수치가 구조화돼 있지 않아 묶음별 제외 원인을 추측하지 않습니다. 원본 입력의 baseline·group·min-count·top 선택을 검토하고 필요한 묶음을 다시 분석하세요. 차단 사유 코드는 검토 대기·맥락 부족·기록된 질문을 구분하고, 실제 질문은 `readiness`에서 확인합니다. 이 명령은 파일과 연결 실행 결과를 바꾸지 않으며 정상 보고서가 출력되면 미선택·차단 묶음이 있어도 종료 코드 0, 잘못되거나 변경된 번들은 1입니다.
+
+분모는 **저장된 입력에서 관측된 묶음**입니다. 서비스 전체 오류·영향 사용자·제품 흐름의 테스트 커버리지나 실행 성공률이 아닙니다. `review-ready`는 실행 준비 기록이며 통과 증거가 아닙니다. API는 `await readCoverage(directory)`와 `renderCoverage(summary)`입니다.
+
 Flow QA 설치와 실행 대상 설정은 별도로 필요합니다. 위 `flows/`·`cases/` 구조를 기존 검토 화면에서 읽을 수 있습니다. 분석 명령은 브라우저를 실행하거나 외부 모델에 요청하지 않습니다. TC 통과만으로 원래 오류를 수정 완료 처리하지 않습니다.
 
 실행 후 `node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json`으로 결과를 원래 오류 묶음에 연결할 수 있습니다. suite 해시가 일치해야 하며 전체 실행은 모든 case ID를 포함해야 합니다. 일부 케이스만 실행한 Flow QA 보고서는 `selection.caseIds`가 보고된 케이스와 정확히 일치하고 `selection.totalCases`가 전체 suite 크기와 일치할 때 연결합니다. 알 수 없는·중복된 ID와 선택 선언 없는 누락은 거부합니다. 결과는 `results/<runId>.json`에 저장합니다. 원본 e2e 리포트 대신 Flow QA가 정리한 `report-1`을 사용하세요.

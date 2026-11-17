@@ -8,7 +8,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Exact public consumer versions: update deliberately when auditing a new pair.
-const versions = { browserErrorLog: '0.2.11', flowQa: '0.8.9' };
+const versions = { browserErrorLog: process.env.BROWSER_ERROR_LOG_RELEASE_VERSION ?? '0.2.12', flowQa: '0.9.0' };
+assert.match(versions.browserErrorLog, /^\d+\.\d+\.\d+$/, 'BROWSER_ERROR_LOG_RELEASE_VERSION must be an exact stable version.');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = join(root, 'output/ecosystem');
 const temp = await mkdtemp(join(tmpdir(), 'error-to-test-ecosystem-'));
@@ -18,6 +19,7 @@ let fixed = false;
 let ui;
 let server;
 const captured = [];
+const returnedManualIds = [];
 
 async function command(file, args, { cwd = consumer, allowed = [0], timeout = 180_000 } = {}) {
   return new Promise((accept, reject) => {
@@ -124,6 +126,12 @@ try {
         captured.push(...JSON.parse(body).events);
         response.end('{}'); return;
       }
+      if (path === '/capture-id' && request.method === 'POST') {
+        let body = '';
+        for await (const chunk of request) { body += chunk; if (body.length > 1024) throw new Error('Large fixture request'); }
+        returnedManualIds.push(JSON.parse(body).eventId);
+        response.end('{}'); return;
+      }
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.end(`<!doctype html><title>Ecosystem fixture</title><button>Check</button><div role="status">Ready</div>
         <script type="module">
@@ -133,7 +141,10 @@ try {
             if(location.pathname==='/resource'){
               const img=new Image();
               await new Promise(resolve=>{img.onerror=()=>setTimeout(resolve,0);img.src='/missing.png';document.body.append(img);});
-            }else{client.captureException(new Error('Controlled JavaScript failure'),{type:'javascript'});}
+            }else{
+              const eventId=client.captureException(new Error('Controlled JavaScript failure'),{type:'javascript'});
+              await fetch('/capture-id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eventId})});
+            }
             await client.flush();
             document.querySelector('[role=status]').textContent=${JSON.stringify(fixed ? 'Recovered' : 'Broken')};
           };
@@ -180,15 +191,33 @@ try {
   await run(discovery, 'failed');
   assert.equal(captured.length, 2);
   assert.deepEqual(captured.map(event => event.type).sort(), ['javascript', 'resource']);
+  assert.equal(returnedManualIds.length, 1);
+  assert.equal(typeof returnedManualIds[0], 'string');
+  assert.ok(returnedManualIds[0]);
+  assert.equal(returnedManualIds[0], captured.find(event => event.type === 'javascript').eventId);
+  evidence.checks.push('manual SDK capture returns the same event ID received by the local fixture collector');
   const input = join(temp, 'captured.json');
   if (process.env.BROWSER_ERROR_LOG_MICRO_DIRECTORY) await sqliteExport(captured, targetURL, input);
   else await writeFile(input, JSON.stringify({ schemaVersion: 1, partial: true, events: captured }));
   evidence.checks.push('published SDK captures JavaScript and resource failures in Chromium');
   const pending = join(temp, 'pending');
   await analyze(input, pending, false);
+  const pendingCoverage = JSON.parse((await command(ett, ['coverage', pending, '--format', 'json'])).stdout);
+  assert.equal(pendingCoverage.frequency, 'captured-events');
+  assert.deepEqual(pendingCoverage.counts, { observedGroups: 2, selectedGroups: 2, unselectedGroups: 0, blockedGroups: 2, reviewReadyGroups: 0 });
+  assert.ok(pendingCoverage.groups.every(group => group.reasons.includes('review-pending')));
   assert.equal((await run(pending, 'blocked')).cases.filter(item => item.status === 'blocked').length, 2);
   const reviewed = join(temp, 'reviewed');
   const suite = await analyze(input, reviewed);
+  const reviewedCoverage = JSON.parse((await command(ett, ['coverage', reviewed, '--format', 'json'])).stdout);
+  assert.deepEqual(reviewedCoverage.counts, { observedGroups: 2, selectedGroups: 2, unselectedGroups: 0, blockedGroups: 0, reviewReadyGroups: 2 });
+  const topOne = join(temp, 'top-one');
+  await analyze(input, topOne, true, ['--top', '1']);
+  const topCoverage = JSON.parse((await command(ett, ['coverage', topOne, '--format', 'json'])).stdout);
+  assert.deepEqual(topCoverage.counts, { observedGroups: 2, selectedGroups: 1, unselectedGroups: 1, blockedGroups: 0, reviewReadyGroups: 1 });
+  assert.equal(topCoverage.groups.filter(group => group.status === 'unselected').length, 1);
+  assert.equal(topCoverage.groups.find(group => group.status === 'unselected').reasons[0], 'not-selected-in-saved-bundle');
+  evidence.checks.push('installed coverage CLI accounts for pending, reviewed, and top-one unselected observed groups without calling execution success');
   const analysis = JSON.parse(await readFile(join(reviewed, 'analysis.json'), 'utf8'));
   assert.equal(analysis.coverage.partial, true);
   const before = await run(reviewed, 'failed');

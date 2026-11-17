@@ -45,7 +45,11 @@ function count(value: unknown, label: string): number {
 }
 
 export async function readReadiness(directory: string): Promise<ReadinessSummary> {
-  const { analysis, provenance, suite, verification } = await readVerifiedBundle(directory);
+  return summarizeReadiness(await readVerifiedBundle(directory));
+}
+
+/** Share one verified snapshot with other read-only reports. */
+export function summarizeReadiness({ analysis, provenance, suite, verification }: Awaited<ReturnType<typeof readVerifiedBundle>>): ReadinessSummary {
   const inputSha256 = sha(provenance.inputSha256, 'provenance.inputSha256');
   const analysisSha256 = sha(provenance.analysisSha256, 'provenance.analysisSha256');
   const suiteSha256 = provenance.suiteSha256 === undefined ? undefined : sha(provenance.suiteSha256, 'provenance.suiteSha256');
