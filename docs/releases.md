@@ -2,6 +2,10 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.5 — interpret SDK batches and linked browser runs
+
+Reports and event traces now show whether the source marked an export partial and separately state that collection completeness is unverified. The readiness warning identifies the check that produced it when a trace also lists browser runs. The packaged skill shows how to copy a reviewed suite into an initialized Flow QA workspace and check its bytes before execution.
+
 ## 0.4.4 — linked result consistency and publication
 
 `link-run` rejects a `passed` run containing a failed, flaky, blocked, skipped, or error case; stored result readers apply the same check. Completed results are written under a temporary name and published atomically without replacing a concurrent run ID. A result larger than the reader's 2 MiB limit is rejected before publication. `trace` directs readers to the linked outcome once a case has a result instead of suggesting the case has not run. Existing blocked, failed, interrupted, and error runs retain their established meaning.

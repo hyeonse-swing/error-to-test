@@ -19,7 +19,7 @@ const shaPattern = /^[0-9a-f]{64}$/;
 const notes = [
   'Readiness means only that no selected-case blockers are recorded in this snapshot. It does not prove runtime access, credentials, coverage, or execution.',
   'Original input files were not supplied for this check; source content was not independently verified.',
-  'No browser execution was performed.',
+  'This readiness check did not execute a browser. Linked runs are reported separately.',
 ];
 
 function id(value: unknown, label: string): string {

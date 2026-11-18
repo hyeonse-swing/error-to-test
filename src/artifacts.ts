@@ -22,7 +22,7 @@ export function renderReport(analysis: Analysis): string {
     `Groups: ${analysis.groups.length} · TC candidates: ${analysis.candidates.length}`,
     `Draft TC candidates: ${draftCandidates} · Need context: ${needsContextCandidates}`,
     `Input: ${analysis.coverage.kind} · Count meaning: ${analysis.coverage.frequency}`,
-    `Partial export: ${analysis.coverage.partial ? 'yes' : 'no'} · Retention coverage: unknown`,
+    `Source marked partial: ${analysis.coverage.partial ? 'yes' : 'no'} · Collection completeness: unverified · Retention coverage: unknown`,
     `Duplicate records: ${analysis.coverage.duplicates} · Filtered records: ${analysis.coverage.filtered}`, '',
     'Counts describe the supplied records. They are not error rates, affected-user counts, or proof of complete collection.',
     'Drafts require review. A passing TC proves only its assertions; it does not automatically close the source issue.', ''];
@@ -48,7 +48,7 @@ export function renderReport(analysis: Analysis): string {
     'Mode: only-current (signatures absent from the supplied baseline)',
     `Baseline input SHA-256: ${analysis.selection.baseline.inputSha256}`,
     `Baseline analysis SHA-256: ${analysis.selection.baseline.analysisSha256}`,
-    `Baseline: ${analysis.selection.baseline.coverage.kind} / ${analysis.selection.baseline.coverage.frequency} · partial ${analysis.selection.baseline.coverage.partial ? 'yes' : 'no'} · retention unknown`,
+    `Baseline: ${analysis.selection.baseline.coverage.kind} / ${analysis.selection.baseline.coverage.frequency} · marked partial ${analysis.selection.baseline.coverage.partial ? 'yes' : 'no'} · collection completeness unverified · retention unknown`,
     `Only-current groups before min-count/top: ${analysis.selection.onlyCurrentGroupCount}`,
     `Groups excluded as already observed: ${analysis.selection.excludedGroupCount}`,
     'All current groups remain below. Absence from this baseline does not establish when an error was introduced.',

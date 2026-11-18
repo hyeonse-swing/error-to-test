@@ -57,7 +57,7 @@ test('returns the exact saved group detail with whole-bundle coverage and leaves
     assert.match(output, /## Source coverage \(whole original bundle\)/);
     assert.match(output, /Input records: 4\nDuplicate records: 1\nFiltered records: 1/);
     assert.match(output, /Period from: 2026-10-01T00:00:00.000Z/);
-    assert.match(output, /Partial export: no\nRetention coverage: unknown/);
+    assert.match(output, /Source marked partial: no\nCollection completeness: unverified\nRetention coverage: unknown/);
     assert.match(output, /not error rates, affected-user counts, or complete collection/);
     assert.match(output, /Original raw input bytes were not independently rechecked/);
     assert.match(output, /use readiness for actual exported blockers/);
@@ -214,7 +214,7 @@ test('labels a partial browser export as coverage of the whole original bundle',
     await writeBundle(directory, analysis);
     const output = await readIssueReport(directory, unselected.id);
     assert.match(output, /## Source coverage \(whole original bundle\)/);
-    assert.match(output, /Kind: browser-error-json\nFrequency: captured-events\nPartial export: yes\nRetention coverage: unknown\nInput records: 4/);
+    assert.match(output, /Kind: browser-error-json\nFrequency: captured-events\nSource marked partial: yes\nCollection completeness: unverified\nRetention coverage: unknown\nInput records: 4/);
     assert.match(output, /Selected TC candidates: 0/);
     assert.match(output, /Source export is partial; observed counts may be incomplete/);
   } finally { await rm(temp, { recursive: true, force: true }); }

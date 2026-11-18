@@ -42,7 +42,7 @@ test('actual generated bundles distinguish review, missing context, ready, mixed
     assert.equal(ready.status, 'ready');
     assert.deepEqual(ready.counts, { groups: 1, selected: 1, draft: 1, needsContext: 0, ready: 1, blocked: 0 });
     assert.deepEqual(ready.cases[0]!.blockers, []);
-    assert.match(ready.warnings.join(' '), /No browser execution/);
+    assert.match(ready.warnings.join(' '), /This readiness check did not execute a browser/);
     assert.match(renderReadiness(ready), /Status: ready/);
 
     const blocked = await readReadiness(await bundle(temp, [missing], true));

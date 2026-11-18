@@ -33,7 +33,8 @@ function sourceCoverage(value: unknown): string[] {
   const lines = [
     `Kind: ${coverage.kind}`,
     `Frequency: ${coverage.frequency}`,
-    `Partial export: ${coverage.partial ? 'yes' : 'no'}`,
+    `Source marked partial: ${coverage.partial ? 'yes' : 'no'}`,
+    'Collection completeness: unverified',
     'Retention coverage: unknown',
     `Input records: ${inputCount}`,
     `Duplicate records: ${duplicates}`,

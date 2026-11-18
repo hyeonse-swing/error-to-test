@@ -21,6 +21,21 @@ const input = JSON.stringify({ schemaVersion: 1, partial: true, events: [
   event('shared', 'beta', 'Search failed', 1),
 ] });
 
+test('an unmarked SDK export reports unverified collection without changing the trace schema', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-trace-unmarked-'));
+  try {
+    const directory = join(temp, 'bundle');
+    const unmarked = JSON.stringify({ schemaVersion: 1, events: [event('sdk-event', 'alpha', 'Checkout failed', 1)] });
+    await writeBundle(directory, analyzeErrors(unmarked));
+    const report = await readFile(join(directory, 'report.md'), 'utf8');
+    assert.match(report, /Source marked partial: no · Collection completeness: unverified · Retention coverage: unknown/);
+    const trace = await readEventTrace(directory, 'sdk-event');
+    assert.equal(trace.source.partial, false);
+    assert.match(renderEventTrace(trace), /Source marked partial: no\nCollection completeness: unverified\nRetention coverage: unknown/);
+    assert.match(trace.warnings.join(' '), /This readiness check did not execute a browser/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('one SDK ID traces every project, selected TC, latest target outcome, and partial-source absence', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-trace-'));
   try {
