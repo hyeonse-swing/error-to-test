@@ -56,8 +56,14 @@ function groupCases(readiness: ReadinessSummary): Map<string, ReadinessSummary['
 
 /** Account for every observed group in one verified, immutable analysis snapshot. */
 export async function readCoverage(directory: string): Promise<CoverageSummary> {
-  const snapshot = await readVerifiedBundle(directory);
-  const readiness = summarizeReadiness(snapshot);
+  return summarizeCoverage(await readVerifiedBundle(directory));
+}
+
+/** Use an already verified snapshot when another report needs the same analysis. */
+export function summarizeCoverage(
+  snapshot: Awaited<ReturnType<typeof readVerifiedBundle>>,
+  readiness: ReadinessSummary = summarizeReadiness(snapshot),
+): CoverageSummary {
   const frequency = record(snapshot.analysis.coverage, 'analysis.coverage').frequency;
   if (frequency !== 'captured-events' && frequency !== 'submitted-reports') throw new Error('STALE_BUNDLE: Source frequency is invalid.');
   const cases = groupCases(readiness);

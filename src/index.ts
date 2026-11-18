@@ -11,5 +11,6 @@ export { refineBundle } from './refinement.ts';
 export { readRunSummary, renderRunSummary, type RunSummary, type ReadRunSummaryOptions, type LinkedRunStatus, type LinkedCaseStatus } from './run-summary.ts';
 export { readReadiness, renderReadiness, type ReadinessSummary } from './readiness.ts';
 export { readCoverage, renderCoverage, type CoverageSummary, type GroupCoverageStatus, type GroupCoverageReason } from './coverage.ts';
+export { readEventTrace, renderEventTrace, type EventTrace } from './trace.ts';
 export { compareBundles, renderComparison, type AnalysisComparison, type ComparisonStatus, type ComparisonSide, type ComparisonOccurrence, type ComparisonIssue } from './comparison.ts';
 export type * from './types.ts';

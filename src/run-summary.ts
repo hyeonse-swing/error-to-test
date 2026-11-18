@@ -160,15 +160,30 @@ function nonnegativeCount(value: unknown, label: string): number {
   return value as number;
 }
 
-export async function readRunSummary(directory: string, options: ReadRunSummaryOptions = {}): Promise<RunSummary> {
+function selectedTarget(options: ReadRunSummaryOptions): string | undefined {
   if (options === null || typeof options !== 'object' || Array.isArray(options)
     || Object.keys(options).some(key => key !== 'targetFingerprint')) {
     throw new Error('readRunSummary options support only targetFingerprint.');
   }
-  const selectedTargetFingerprint = options.targetFingerprint === undefined ? undefined
+  return options.targetFingerprint === undefined ? undefined
     : validatedTargetFingerprint(options.targetFingerprint, 'targetFingerprint');
+}
+
+export async function readRunSummary(directory: string, options: ReadRunSummaryOptions = {}): Promise<RunSummary> {
+  selectedTarget(options);
   const root = resolve(directory);
-  const { analysis, provenance, verification } = await readVerifiedBundle(root);
+  return summarizeRunSummary(root, await readVerifiedBundle(root), options);
+}
+
+/** Read linked results against an already verified bundle snapshot. */
+export async function summarizeRunSummary(
+  directory: string,
+  snapshot: Awaited<ReturnType<typeof readVerifiedBundle>>,
+  options: ReadRunSummaryOptions = {},
+): Promise<RunSummary> {
+  const selectedTargetFingerprint = selectedTarget(options);
+  const root = resolve(directory);
+  const { analysis, provenance, verification } = snapshot;
   const inputSha256 = sha256(provenance.inputSha256, 'provenance.inputSha256');
   const suiteSha256 = provenance.suiteSha256 === undefined ? undefined : sha256(provenance.suiteSha256, 'provenance.suiteSha256');
   if (Boolean(suiteSha256) !== verification.suite) throw new Error('STALE_BUNDLE: Suite provenance is inconsistent.');

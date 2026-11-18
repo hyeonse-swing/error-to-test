@@ -365,6 +365,20 @@ JSON uses `error-to-test/coverage-1`. `outside-explicit-group-filter` is exact w
 
 The denominator is groups observed in the supplied saved input, **not** production errors, affected users, product flow coverage, or test execution. `review-ready` is a candidate state, not a passing test. Source collection and retention limits still apply. The API is `await readCoverage(directory)` and `renderCoverage(summary)`; it does not change `readiness` or its exit codes.
 
+### Trace one captured event ID
+
+Use the ID shown by Browser Error Log to find its observed groups, selected TC candidates, review blockers, and latest linked case outcome in one saved bundle:
+
+```sh
+error-to-test trace ./analysis --event-id "YOUR_EVENT_ID"
+error-to-test trace ./analysis --event-id "YOUR_EVENT_ID" --format json
+error-to-test trace ./analysis --event-id "YOUR_EVENT_ID" --target-fingerprint "$TARGET_FINGERPRINT"
+```
+
+The read-only `error-to-test/trace-1` result includes all matching groups because two projects can reuse an ID. It retains `unselected`, `blocked`, and `review-ready` states; a selected case omitted from the latest linked run is `not-run`. Linked results use the same latest-run and target-scope rules as `results`. Output includes source hashes, partial-export status, and unknown retention without copying error messages or stacks. An ID missing from the saved input yields `found: false` and CLI exit `2`; it does not establish that the event never occurred or was never collected. Invalid bundles, linked results, or options exit `1`. Original input bytes can be rechecked with `verify --input` when available.
+
+The API is `await readEventTrace(directory, eventId, { targetFingerprint })` and `renderEventTrace(trace)`. Omit the options argument to use the latest linked run across all targets. `trace` reads the verified snapshot and writes no files.
+
 ## JavaScript API
 
 ```js

@@ -15,9 +15,12 @@ error-to-test analyze --input errors.jsonl --format jsonl --min-count 3 --top 10
 error-to-test verify ./initial-analysis --input errors.json
 error-to-test readiness ./initial-analysis
 error-to-test coverage ./initial-analysis
+error-to-test trace ./initial-analysis --event-id "YOUR_EVENT_ID" --format json
 ```
 
 `--min-count` and `--top` narrow candidate selection, while unselected groups remain in the analysis. `readiness` exits 2 for blocked or empty selection, 0 for reviewed candidates without recorded blockers, and 1 for invalid input. `coverage` reports `unselected`, `blocked`, or `review-ready` for all observed groups; its valid report exits 0 even with blocked groups. Neither command executes a test. `verify` checks bundle consistency; original bytes are checked only when `--input` is supplied. The package accepts up to 50 files, 10 MiB combined and 10,000 raw records.
+
+`trace` looks up one SDK event ID in the verified saved input. It returns every matching group (including across projects), selected candidates, blockers, and latest linked case outcomes. Before a run, selected cases are `not-run`. Use `--target-fingerprint` from `results --format json` to scope linked outcomes. An ID absent from the saved input returns `found: false` and exit 2; partial exports and unknown retention prevent a global absence claim. Trace output omits raw error messages and stacks.
 
 ## Confirm candidates and review
 

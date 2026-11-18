@@ -12,6 +12,7 @@ import { linkFlowQaReport } from './results.ts';
 import { readRunSummary, renderRunSummary } from './run-summary.ts';
 import { readReadiness, renderReadiness } from './readiness.ts';
 import { readCoverage, renderCoverage } from './coverage.ts';
+import { readEventTrace, renderEventTrace } from './trace.ts';
 import { refineBundle } from './refinement.ts';
 import { readIssueReport } from './issue-report.ts';
 import type { Analysis, EventType, Runtime } from './types.ts';
@@ -34,6 +35,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
   error-to-test coverage new-directory [--format text|json]
+  error-to-test trace new-directory --event-id ID [--format text|json] [--target-fingerprint SHA256]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
 Options:
@@ -42,10 +44,12 @@ Options:
   --format auto|json|jsonl|text Analyze input format; JSONL requires explicit selection and one record per line; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
   --fail-on STATUS        Results gate: failed|flaky|blocked|skipped|error|not-run (repeatable; exit 2 on a match or no selected cases, 1 on error)
-  --target-fingerprint SHA256  Scope results and gate to this target's 64-character lowercase SHA-256 fingerprint
+  --target-fingerprint SHA256  Scope results or trace to this target's 64-character lowercase SHA-256 fingerprint
   --format text|json      Compare format (default: text Markdown)
   --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
   --format text|json      Observed group coverage format (default: text Markdown; read-only, no gate)
+  --event-id ID           Trace an SDK event ID within one saved analysis (exit 2 when absent)
+  --target-fingerprint SHA256  Scope trace outcomes to this linked target fingerprint
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
   --profile FILE         Replacement profile for the bundle's previously selected groups (refine; required)
   --baseline DIRECTORY   Select only signatures absent from this verified bundle, before --min-count and --top; retain all groups in analysis.json (analyze only)
@@ -157,7 +161,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'target-fingerprint': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'target-fingerprint': { type: 'string' }, 'event-id': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -168,7 +172,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, or coverage. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, coverage, or trace. See --help.');
     process.stdout.write(help);
     return;
   }
@@ -311,6 +315,22 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     await writeGateOutput(content);
     return;
   }
+  if (command === 'trace') {
+    if (positionals.length !== 2 || !positionals[1]?.trim() || !values['event-id']?.trim()) {
+      throw new Error('trace requires one bundle directory and --event-id ID.');
+    }
+    if (Object.keys(values).some(key => !['event-id', 'format', 'target-fingerprint', 'help'].includes(key))) {
+      throw new Error('Unsupported option for trace. Use only --event-id ID, --format text|json, and --target-fingerprint SHA256.');
+    }
+    const format = values.format ?? 'text';
+    if (format !== 'text' && format !== 'json') throw new Error('trace --format must be text or json.');
+    const trace = await readEventTrace(resolve(positionals[1]), values['event-id'], { targetFingerprint: values['target-fingerprint'] });
+    const content = format === 'json' ? jsonText(trace) : renderEventTrace(trace);
+    if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The event trace exceeds 64 MiB. Narrow the bundle before requesting output.');
+    await writeGateOutput(content);
+    if (!trace.found) process.exitCode = 2;
+    return;
+  }
   if (command === 'compare') {
     if (positionals.length !== 3 || !positionals[1] || !positionals[2]) throw new Error('compare requires BASELINE and CURRENT bundle directories.');
     if (Object.keys(values).some(key => !['format', 'out', 'max-new', 'help'].includes(key))) throw new Error('Unsupported option for compare. Use only --format text|json, --out FILE, and --max-new N.');
@@ -368,10 +388,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, or coverage. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, coverage, or trace. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
   if (values['target-fingerprint'] !== undefined) throw new Error('--target-fingerprint applies to results only.');
+  if (values['event-id'] !== undefined) throw new Error('--event-id applies to trace only.');
   if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');

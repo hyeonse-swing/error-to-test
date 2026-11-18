@@ -271,6 +271,16 @@ JSON 스키마는 `error-to-test/coverage-1`입니다. `outside-explicit-group-f
 
 분모는 **저장된 입력에서 관측된 묶음**입니다. 서비스 전체 오류·영향 사용자·제품 흐름의 테스트 커버리지나 실행 성공률이 아닙니다. `review-ready`는 실행 준비 기록이며 통과 증거가 아닙니다. API는 `await readCoverage(directory)`와 `renderCoverage(summary)`입니다.
 
+SDK가 반환한 오류 ID에서 그룹·TC 후보·검토 차단 사유·최근 연결 실행 결과를 찾으려면 `trace`를 사용합니다.
+
+```sh
+error-to-test trace ./review-analysis --event-id "YOUR_EVENT_ID"
+error-to-test trace ./review-analysis --event-id "YOUR_EVENT_ID" --format json
+error-to-test trace ./review-analysis --event-id "YOUR_EVENT_ID" --target-fingerprint "$TARGET_FINGERPRINT"
+```
+
+`error-to-test/trace-1`은 여러 프로젝트에서 같은 ID를 썼다면 일치하는 그룹을 모두 반환합니다. 미선택·차단·검토 준비와 최근 실행에서 빠진 TC의 `not-run`을 구분하고, 실행 결과는 `results`와 동일한 대상 범위·최근 실행 규칙을 따릅니다. 오류 메시지나 스택 대신 ID·프로젝트·그룹·TC·상태와 입력 해시, 부분 수집 여부, 보존 범위 미확인 경고를 표시합니다. ID가 저장된 분석 입력에 없으면 `found: false`와 종료 코드 2를 반환합니다. 서비스 전체에서 발생하지 않았다는 뜻은 아닙니다. 잘못된 번들·옵션은 코드 1입니다. 원본 바이트는 필요 시 `verify --input`으로 확인하세요. API는 `readEventTrace(directory, eventId, { targetFingerprint })`와 `renderEventTrace(trace)`입니다.
+
 Flow QA 설치와 실행 대상 설정은 별도로 필요합니다. 위 `flows/`·`cases/` 구조를 기존 검토 화면에서 읽을 수 있습니다. 분석 명령은 브라우저를 실행하거나 외부 모델에 요청하지 않습니다. TC 통과만으로 원래 오류를 수정 완료 처리하지 않습니다.
 
 실행 후 `node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json`으로 결과를 원래 오류 묶음에 연결할 수 있습니다. suite 해시가 일치해야 하며 전체 실행은 모든 case ID를 포함해야 합니다. 일부 케이스만 실행한 Flow QA 보고서는 `selection.caseIds`가 보고된 케이스와 정확히 일치하고 `selection.totalCases`가 전체 suite 크기와 일치할 때 연결합니다. 알 수 없는·중복된 ID와 선택 선언 없는 누락은 거부합니다. 결과는 `results/<runId>.json`에 저장합니다. 원본 e2e 리포트 대신 Flow QA가 정리한 `report-1`을 사용하세요.
@@ -315,7 +325,7 @@ error-to-test results ./analysis --fail-on failed --fail-on error --fail-on not-
 
 선택한 대상 범위의 최신 실행 하나에 있는 TC 결과만 평가하며 과거 실패나 다른 대상의 결과를 합치거나 실행 전체 상태를 별도 조건으로 삼지 않습니다. 연결 실행이 없으면 선택된 TC는 `not-run`이므로 미실행도 실패시킬 때 이 값을 지정하세요. 지정하지 않은 상태는 실패 조건이 아니지만, 선택된 TC가 없는 결과는 항상 코드 2입니다. 검토 대기와 미해결 맥락은 실행 전 `readiness`로 별도 점검하세요. 정책 통과는 검토 승인·브라우저 실행 증명·원본 오류 수정 완료를 의미하지 않습니다.
 
-`--fail-on`을 생략하면 기존 결과 조회 동작과 종료 코드를 유지합니다. `--fail-on`과 `--target-fingerprint`는 `results` 전용입니다. 요약은 `error-to-test/run-summary-1`을 유지하면서 대상 목록·범위 필드를 추가합니다. API에서는 `readRunSummary(directory, { targetFingerprint })`가 반환한 `counts`로 정책을 적용할 수 있습니다.
+`--fail-on`을 생략하면 기존 결과 조회 동작과 종료 코드를 유지합니다. `--fail-on`은 `results` 전용이고 `--target-fingerprint`는 `results`와 `trace`에서 사용합니다. 요약은 `error-to-test/run-summary-1`을 유지하면서 대상 목록·범위 필드를 추가합니다. API에서는 `readRunSummary(directory, { targetFingerprint })`가 반환한 `counts`로 정책을 적용할 수 있습니다.
 
 직접 입력은 문자열, 텍스트 파일, 표준 입력, `error-to-test/manual-1` JSON을 지원합니다. 파일 구조는 [수동 오류 예제](examples/manual.json), 정상 기대 동작과 단계 연결은 [프로필 예제](examples/profile.json)를 참고하세요. 전체 옵션은 `node bin/error-to-test.mjs --help`로 확인할 수 있습니다.
 

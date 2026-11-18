@@ -13,6 +13,7 @@ try {
   assert.ok(packed[0].files.every(file => !file.path.startsWith('node_modules/') && !file.path.startsWith('.error-to-test/')));
   assert.ok(packed[0].files.some(file => file.path === 'dist/index.js'));
   assert.ok(packed[0].files.some(file => file.path === 'dist/coverage.js'));
+  assert.ok(packed[0].files.some(file => file.path === 'dist/trace.js'));
   assert.deepEqual(packed[0].files.filter(file => file.path.startsWith('bin/')).map(file => file.path), ['bin/error-to-test.mjs']);
   assert.ok(packed[0].files.some(file => file.path === 'docs/releases.md'));
   for (const path of ['docs/ai.md', 'llms.txt', 'skills/error-to-test/SKILL.md', 'skills/error-to-test/references/workflow.md', 'skills/error-to-test/references/web-steps.md']) {
@@ -33,7 +34,10 @@ try {
   const installedRoot = join(temp, 'node_modules/@ihyeon/error-to-test');
   const installedSkill = await readFile(join(installedRoot, 'skills/error-to-test/SKILL.md'), 'utf8');
   assert.match(installedSkill, /references\/workflow\.md/);
-  assert.ok((await readFile(join(installedRoot, 'skills/error-to-test/references/workflow.md'), 'utf8')).includes('error-to-test analyze'));
+  assert.match(installedSkill, /trace BUNDLE --event-id ID/);
+  const installedWorkflow = await readFile(join(installedRoot, 'skills/error-to-test/references/workflow.md'), 'utf8');
+  assert.ok(installedWorkflow.includes('error-to-test analyze'));
+  assert.ok(installedWorkflow.includes('error-to-test trace'));
   const runCli = args => execFileSync(join(temp, 'node_modules/.bin/error-to-test'), args, { cwd: temp, encoding: 'utf8', stdio: 'pipe', timeout: 30_000 });
   const errorFile = join(temp, 'observed-error.txt');
   const initial = join(temp, 'initial');
@@ -41,6 +45,17 @@ try {
   const reviewed = join(temp, 'with-profile');
   await writeFile(errorFile, 'TypeError: missing item\n    at render (/app.js:10:2)');
   runCli(['analyze', '--input', errorFile, '--page', '/items', '--runtime', 'browser', '--out', initial]);
+  const initialAnalysis = JSON.parse(await readFile(join(initial, 'analysis.json'), 'utf8'));
+  const eventId = initialAnalysis.groups[0].eventIds[0];
+  const installedTrace = JSON.parse(runCli(['trace', initial, '--event-id', eventId, '--format', 'json']));
+  assert.equal(installedTrace.schemaVersion, 'error-to-test/trace-1');
+  assert.equal(installedTrace.found, true);
+  assert.equal(installedTrace.matches[0].cases[0].status, 'not-run');
+  await writeFile(join(temp, 'trace-consumer.mjs'), `import assert from 'node:assert/strict';\nimport {readEventTrace,renderEventTrace} from '@ihyeon/error-to-test';\nconst trace=await readEventTrace(process.argv[2],process.argv[3]);\nassert.equal(trace.found,true);\nassert.match(renderEventTrace(trace),/Event trace/);\n`);
+  execFileSync(process.execPath, ['trace-consumer.mjs', initial, eventId], { cwd: temp, stdio: 'pipe' });
+  const absentTrace = spawnSync(join(temp, 'node_modules/.bin/error-to-test'), ['trace', initial, '--event-id', 'absent', '--format', 'json'], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(absentTrace.status, 2);
+  assert.equal(JSON.parse(absentTrace.stdout).found, false);
   runCli(['init-profile', initial, '--out', profileFile]);
   const profile = JSON.parse(await readFile(profileFile, 'utf8'));
   assert.equal(profile.scenarios.length, 1);
@@ -350,5 +365,5 @@ try {
   }
   assert.notEqual(reports[0].path, reports[1].path);
   assert.equal(await readFile(reports[0].path, 'utf8'), reports[0].content);
-  console.log('Packed package, independent import, installed CLI issue report/results CI gate/refinement/group selection/coverage/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
+  console.log('Packed package, independent import, installed CLI event trace/issue report/results CI gate/refinement/group selection/coverage/readiness/profile extension/results/comparison with CI limits/baseline/multi-input/JSONL workflows, and repeatable demo: PASS (offline; no runtime dependencies).');
 } finally { await rm(temp, { recursive: true, force: true }); }

@@ -2,6 +2,10 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.3 — saved event ID trace
+
+`trace` and `readEventTrace()` connect a Browser Error Log ID to all matching observed groups, selected TC candidates, review blockers, and the latest linked case outcome. Matching across projects, unselected groups, partial input, unknown IDs, and target-scoped results remain explicit. The read-only `error-to-test/trace-1` output omits raw error messages and stacks; an absent ID means only that it was not in the saved analysis input. See [the research record](event-trace-research-2026-11-18.md) for the observed gap and choice. The local check passed 209 tests, type checking and build. The installed tarball smoke exercised the CLI and API. A saved 0.4.2 bundle also resolved an event ID to its latest linked passing case.
+
 ## 0.4.2 — supported assertions for copied skills
 
 A new-project trial using only the copied skill reached real error collection, reviewed candidates, and a failing browser QA run, but the consumer guessed an unsupported `assertEnabled` step. The portable skill now links a focused web-step reference with accepted shapes, locator types, model-dependent steps, and explicit handling of requirements outside fixed assertions. The workflow also clarifies preserving both the suite and its source flow when selecting a Flow QA workspace. Runtime APIs and schemas are unchanged.
