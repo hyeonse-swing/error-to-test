@@ -325,6 +325,8 @@ error-to-test results ./analysis --fail-on failed --fail-on error --fail-on not-
 
 전체 보고서를 출력하거나 저장한 뒤 0 또는 2를 반환하고 숫자로 된 판정 요약은 stderr에 씁니다. JSON stdout은 기존 `error-to-test/run-summary-1` 형식이며 판정 필드를 추가하지 않습니다. 출력 오류는 판정 요약 없이 코드 1로 처리하고 기존 파일은 보존합니다.
 
+전체 통과를 요구할 때는 `error-to-test results ./analysis --require-pass`를 사용합니다. 선택한 대상의 최신 실행 자체가 통과했고, 내보낸 TC가 하나 이상이며 그 실행에서 모두 통과해야 종료 코드 0입니다. 중단·부분 실행·미실행은 2입니다. 대상이 여럿이거나 대상 정보가 없는 기록이 섞여 있으면 확인하려는 `--target-fingerprint`를 지정하세요. 대상이 없는 기록만 있다면 대상 정보가 있는 보고서가 필요합니다. 잘못된 입력·옵션·출력 오류는 1입니다.
+
 선택한 대상 범위의 최신 실행 하나에 있는 TC 결과만 평가하며 과거 실패나 다른 대상의 결과를 합치거나 실행 전체 상태를 별도 조건으로 삼지 않습니다. 연결 실행이 없으면 선택된 TC는 `not-run`이므로 미실행도 실패시킬 때 이 값을 지정하세요. 지정하지 않은 상태는 실패 조건이 아니지만, 선택된 TC가 없는 결과는 항상 코드 2입니다. 검토 대기와 미해결 맥락은 실행 전 `readiness`로 별도 점검하세요. 정책 통과는 검토 승인·브라우저 실행 증명·원본 오류 수정 완료를 의미하지 않습니다.
 
 `--fail-on`을 생략하면 기존 결과 조회 동작과 종료 코드를 유지합니다. `--fail-on`은 `results` 전용이고 `--target-fingerprint`는 `results`와 `trace`에서 사용합니다. 요약은 `error-to-test/run-summary-1`을 유지하면서 대상 목록·범위 필드를 추가합니다. API에서는 `readRunSummary(directory, { targetFingerprint })`가 반환한 `counts`로 정책을 적용할 수 있습니다.

@@ -54,12 +54,12 @@ flow-qa connect preview --url "$PREVIEW_URL" --workspace ./qa-run
 flow-qa run cases/error-to-test.json --workspace ./qa-run --target preview
 ```
 
-After Flow QA runs the exported suite on that chosen target and writes a normalized `flow-qa/report-1` report:
+Set `RUN_ID` to the exact ID from this Flow QA execution. Link its normalized report and check the latest run in the chosen target scope.
 
 ```sh
-error-to-test link-run ./reviewed-analysis --report ./flow-qa-report.json
+error-to-test link-run ./reviewed-analysis --report "./qa-run/.flowqa/runs/$RUN_ID/qa-report.json"
 error-to-test results ./reviewed-analysis --format json
-error-to-test results ./reviewed-analysis --target-fingerprint <64-lowercase-hex-fingerprint> --fail-on failed --fail-on error --fail-on not-run
+error-to-test results ./reviewed-analysis --target-fingerprint "$TARGET_FINGERPRINT" --require-pass
 ```
 
-Get a target fingerprint from the unfiltered `results --format json` target inventory before using the filter. Never infer a target from a log URL. Linking requires the exported suite hash and declared case IDs to match. The latest linked run supplies outcomes; selected runs leave other cases `not-run`. Results can be `passed`, `failed`, `flaky`, `blocked`, `skipped`, `error`, or `not-run`. A `--fail-on` gate exits 2 on matching cases or empty selection, 1 for invalid data, 0 otherwise. A passing gate proves only that the specified policy was met for the reported run; it does not prove source issue resolution.
+Set `TARGET_FINGERPRINT` from the unfiltered `results --format json` target inventory before using the filter. Never infer a target from a log URL. Linking requires the exported suite hash and declared case IDs to match. The latest linked run supplies outcomes; selected runs leave other cases `not-run`. Results can be `passed`, `failed`, `flaky`, `blocked`, `skipped`, `error`, or `not-run`. The full-run gate exits 2 unless every exported case and the latest run passed on one identified target. A stopped run can retain passing cases. A custom `--fail-on` gate checks only case counts and exits 2 on matching cases or empty selection, 1 for invalid data, 0 otherwise. A passing gate proves only that the specified policy was met for the reported run; it does not prove source issue resolution.

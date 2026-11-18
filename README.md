@@ -440,6 +440,8 @@ if (summary.targets.length) {
 
 ### Fail CI on selected case outcomes
 
+For a release check, use `error-to-test results ./analysis --require-pass`. Exit 0 requires a nonempty set of exported cases, all passed in the latest run, and the overall run reported as passed. A partial, missing or interrupted run exits 2. With multiple target fingerprints or unscoped history, pass `--target-fingerprint` for the intended target. A history consisting only of unidentified runs needs a report with a target. Invalid options, input or output exit 1.
+
 Use repeatable `--fail-on` with `results` to apply a policy to the latest linked run's case counts:
 
 ```sh
@@ -459,7 +461,7 @@ The full existing Markdown/JSON report is output or saved before returning `0` o
 
 Only the case outcomes from the one latest linked run in the chosen scope are evaluated. Historical failures and outcomes from other targets are not combined with newer results, and the overall run status is not a separate gate condition. Without a linked run, selected cases are `not-run`: include `--fail-on not-run` if unexecuted cases should fail. A status you did not choose does not fail the gate, but an empty selection always does. Use `readiness` separately to check recorded context/review blockers before execution. Passing this policy does not approve cases, prove a browser ran, or resolve source errors.
 
-Omitting `--fail-on` preserves the existing results behavior and exit codes. Both `--fail-on` and `--target-fingerprint` are results-only. The summary keeps `error-to-test/run-summary-1` with additive target inventory and scope fields. API callers can apply their own policy to the `counts` returned by `await readRunSummary(directory, { targetFingerprint })`.
+Omitting both gate options preserves the existing results behavior and exit codes. Both `--fail-on` and `--target-fingerprint` are results-only. The summary keeps `error-to-test/run-summary-1` with additive target inventory and scope fields. API callers can apply their own policy to the `counts` returned by `await readRunSummary(directory, { targetFingerprint })`.
 
 ## Data handling and checks
 

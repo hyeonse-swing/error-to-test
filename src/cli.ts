@@ -9,7 +9,7 @@ import { compareBundles, renderComparison } from './comparison.ts';
 import { createProfileTemplate } from './profile-template.ts';
 import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
-import { readRunSummary, renderRunSummary } from './run-summary.ts';
+import { readRunSummary, renderRunSummary, type RunSummary } from './run-summary.ts';
 import { readReadiness, renderReadiness, summarizeReadiness } from './readiness.ts';
 import { readCoverage, renderCoverage } from './coverage.ts';
 import { readEventTrace, renderEventTrace } from './trace.ts';
@@ -33,7 +33,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
   error-to-test issue new-directory --group GROUP_ID [--out issue.md]
   error-to-test link-run new-directory --report path/to/qa-report.json
-  error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--fail-on STATUS ...]
+  error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--require-pass | --fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
   error-to-test coverage new-directory [--format text|json]
   error-to-test trace new-directory --event-id ID [--format text|json] [--target-fingerprint SHA256]
@@ -44,6 +44,7 @@ Options:
   --error TEXT           Submit a single error directly; remaining lines are its stack
   --format auto|json|jsonl|text Analyze input format; JSONL requires explicit selection and one record per line; auto rejects malformed JSON-looking input
   --format text|json      Results summary format (default: text Markdown)
+  --require-pass          Require a passed full run and all exported cases passed on one identified target (exit 2 otherwise)
   --fail-on STATUS        Results gate: failed|flaky|blocked|skipped|error|not-run (repeatable; exit 2 on a match or no selected cases, 1 on error)
   --target-fingerprint SHA256  Scope results or trace to this target's 64-character lowercase SHA-256 fingerprint
   --format text|json      Compare format (default: text Markdown)
@@ -115,6 +116,17 @@ async function writeGateOutput(content: string): Promise<void> {
 }
 const resultsGateStatuses = ['failed', 'flaky', 'blocked', 'skipped', 'error', 'not-run'] as const;
 type ResultsGateStatus = typeof resultsGateStatuses[number];
+function incompleteRun(summary: RunSummary): string | undefined {
+  if (!summary.latestRun) return 'No linked run in this target scope.';
+  if (!summary.selectedTargetFingerprint && (summary.targets.length !== 1 || summary.unscopedRunCount > 0)) {
+    return 'The target is ambiguous or unidentified. Select --target-fingerprint from the results inventory or link a run with an identified target.';
+  }
+  if (summary.latestRun.status !== 'passed') return `The latest run reported ${summary.latestRun.status}.`;
+  if (!summary.counts.passed || resultsGateStatuses.some(status => summary.counts[status] > 0)) {
+    return 'Every exported case must have a passing outcome in this run. See the case counts.';
+  }
+}
+
 async function inputContents(paths: string[], command: 'analyze' | 'verify' | 'prepare-run'): Promise<string | readonly string[]> {
   if (paths.length < 1 || paths.length > 50) throw new Error('Provide between 1 and 50 --input files.');
   if (paths.some(path => !path.trim())) throw new Error('--input requires a nonempty file path.');
@@ -162,7 +174,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'target-fingerprint': { type: 'string' }, 'event-id': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'require-pass': { type: 'boolean' }, 'target-fingerprint': { type: 'string' }, 'event-id': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -248,10 +260,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command === 'results') {
     if (positionals.length !== 2 || !positionals[1]) throw new Error('results requires one bundle directory.');
-    if (Object.keys(values).some(key => !['format', 'out', 'fail-on', 'target-fingerprint', 'help'].includes(key))) throw new Error('Unsupported option for results. Use only --format text|json, --out FILE, --target-fingerprint SHA256, and --fail-on STATUS.');
+    if (Object.keys(values).some(key => !['format', 'out', 'fail-on', 'require-pass', 'target-fingerprint', 'help'].includes(key))) throw new Error('Unsupported option for results. Use only --format text|json, --out FILE, --target-fingerprint SHA256, and --require-pass or --fail-on STATUS.');
     const format = values.format ?? 'text';
     if (format !== 'text' && format !== 'json') throw new Error('results --format must be text or json.');
+    const requirePass = values['require-pass'] === true;
     const requestedStatuses = values['fail-on'];
+    if (requirePass && requestedStatuses) throw new Error('Choose --require-pass or a custom --fail-on case policy.');
     if (requestedStatuses?.some(status => !resultsGateStatuses.includes(status as ResultsGateStatus))) {
       throw new Error('results --fail-on must be failed, flaky, blocked, skipped, error, or not-run.');
     }
@@ -261,6 +275,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const content = format === 'json' ? jsonText(summary) : renderRunSummary(summary);
     if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The results summary exceeds 64 MiB. Narrow the bundle before requesting output.');
     const finishGate = () => {
+      if (requirePass) {
+        const blocker = incompleteRun(summary);
+        process.stderr.write(blocker ? `Full-run gate failed: ${blocker}\n` : `Full-run gate passed: ${summary.counts.passed} case(s) passed.\n`);
+        if (blocker) process.exitCode = 2;
+        return;
+      }
       if (failOn === undefined) return;
       const selectedTotal = Object.values(summary.counts).reduce((total, count) => total + count, 0);
       const matchTotal = failOn.reduce((total, status) => total + summary.counts[status], 0);
@@ -269,10 +289,13 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       process.stderr.write(selectedTotal === 0
         ? 'Results gate failed: no selected cases.\n'
         : `Results gate ${failed ? 'failed' : 'passed'}: ${matchTotal} cases match --fail-on (${detail}).\n`);
+      if (!failed && summary.latestRun && summary.latestRun.status !== 'passed') {
+        process.stderr.write(`Overall run: ${summary.latestRun.status}. --fail-on checks case counts only.\n`);
+      }
       if (failed) process.exitCode = 2;
     };
     if (values.out === undefined) {
-      if (failOn === undefined) process.stdout.write(content);
+      if (!requirePass && failOn === undefined) process.stdout.write(content);
       else await writeGateOutput(content);
       finishGate();
       return;
@@ -288,7 +311,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       throw error;
     }
     const written = `Results summary written: ${out}\n`;
-    if (failOn === undefined) process.stdout.write(written);
+    if (!requirePass && failOn === undefined) process.stdout.write(written);
     else await writeGateOutput(written);
     finishGate();
     return;
@@ -415,6 +438,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, prepare-run, link-run, results, compare, readiness, coverage, or trace. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
+  if (values['require-pass']) throw new Error('--require-pass applies to results only.');
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
   if (values['target-fingerprint'] !== undefined) throw new Error('--target-fingerprint applies to results only.');
   if (values['event-id'] !== undefined) throw new Error('--event-id applies to trace only.');

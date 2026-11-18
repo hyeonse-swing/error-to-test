@@ -2,6 +2,10 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.7 — distinguish a passed case from a completed run
+
+`results --require-pass` checks that the latest run on the intended target completed with every exported case passing. An interrupted runner can preserve passing case results. The custom `--fail-on` case policy keeps its exit behavior and reports the overall run status when a case policy passes a non-passing run.
+
 ## 0.4.6 — reviewed Flow QA workspace
 
 `prepare-run` verifies the analysis bundle and creates a fresh Flow QA workspace with its original flow and suite bytes. Original inputs and the profile can be checked during the same operation. A blocked or empty selection exits 2 before creating the directory. The operator chooses the target and initiates execution in Flow QA.

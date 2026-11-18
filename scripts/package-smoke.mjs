@@ -199,7 +199,10 @@ try {
   const passedResults = resultGate([reviewed, '--fail-on', 'failed', '--format', 'json']);
   assert.equal(passedResults.status, 0, passedResults.stderr);
   assert.equal(passedResults.stdout, summaryText);
-  assert.equal(passedResults.stderr, 'Results gate passed: 0 cases match --fail-on (failed=0).\n');
+  assert.equal(passedResults.stderr, 'Results gate passed: 0 cases match --fail-on (failed=0).\nOverall run: blocked. --fail-on checks case counts only.\n');
+  const fullRun = resultGate([reviewed, '--require-pass', '--format', 'json']);
+  assert.equal(fullRun.status, 2, fullRun.stderr);
+  assert.equal(fullRun.stdout, summaryText);
   const resultGateFile = join(temp, 'failed-result-gate.md');
   const savedResults = resultGate([reviewed, '--fail-on', 'blocked', '--out', resultGateFile]);
   assert.equal(savedResults.status, 2, savedResults.stderr);

@@ -48,7 +48,7 @@ test('results gate uses latest case counts, canonical deduplicated statuses, and
     const none = run(['results', bundle, '--format', 'json', '--fail-on', 'not-run']);
     assert.equal(none.status, 0, none.stderr);
     assert.equal(none.stdout, original.stdout);
-    assert.equal(none.stderr, 'Results gate passed: 0 cases match --fail-on (not-run=0).\n');
+    assert.equal(none.stderr, 'Results gate passed: 0 cases match --fail-on (not-run=0).\nOverall run: failed. --fail-on checks case counts only.\n');
     const repeated = run(['results', bundle, '--fail-on', 'error', '--fail-on', 'failed', '--fail-on', 'error', '--fail-on', 'not-run']);
     assert.equal(repeated.status, 2, repeated.stderr);
     assert.equal(repeated.stdout, renderRunSummary(await readRunSummary(bundle)));
@@ -73,7 +73,7 @@ test('not-run and empty selection fail, while interrupted run status does not co
     const interrupted = run(['results', bundle, '--format', 'json', '--fail-on', 'error']);
     assert.equal(interrupted.status, 0, interrupted.stderr);
     assert.equal(JSON.parse(interrupted.stdout).latestRun.status, 'interrupted');
-    assert.equal(interrupted.stderr, 'Results gate passed: 0 cases match --fail-on (error=0).\n');
+    assert.equal(interrupted.stderr, 'Results gate passed: 0 cases match --fail-on (error=0).\nOverall run: interrupted. --fail-on checks case counts only.\n');
     const empty = await bundleAt(temp, 0);
     const noCases = run(['results', empty.bundle, '--fail-on', 'failed']);
     assert.equal(noCases.status, 2, noCases.stderr);
@@ -245,5 +245,47 @@ test('closed stdout reports an operational error without a gate outcome, includi
     assert.equal(saved.status, 1, saved.stderr);
     assert.equal(JSON.parse(await readFile(out, 'utf8')).counts['not-run'], 1);
     assert.doesNotMatch(saved.stderr, /Results gate (failed|passed):|at .+\(.*:\d+:\d+\)/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('full-run gate checks target scope, every exported case and overall completion', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-require-pass-'));
+  try {
+    const { bundle, provenance } = await bundleAt(temp, 2);
+    const testGate = (...extra: string[]) => run(['results', bundle, '--format', 'json', '--require-pass', ...extra]);
+    const base = { schemaVersion: 'flow-qa/report-1', suiteHash: provenance.suiteSha256 };
+    const cases = provenance.mappings.map(mapping => ({ id: mapping.caseId, status: 'passed' }));
+    const target = { name: 'preview', url: 'http://127.0.0.1:4601' };
+    let day = 10;
+    const save = (extra: Record<string, unknown>) => {
+      const timestamp = `2026-10-${++day}T00:00:00Z`;
+      return linkFlowQaReport(bundle, { ...base, target, cases, runId: randomUUID(), status: 'passed', startedAt: timestamp, finishedAt: timestamp, ...extra });
+    };
+    assert.equal(testGate().status, 2);
+    const seeded = await save({});
+    const fingerprint = JSON.parse(await readFile(seeded, 'utf8')).targetFingerprint;
+    const good = testGate();
+    assert.equal(good.status, 0, good.stderr);
+    assert.equal(good.stdout, run(['results', bundle, '--format', 'json']).stdout);
+    for (const status of ['interrupted', 'error', 'failed', 'blocked']) {
+      await save({ status });
+      const gate = testGate();
+      assert.equal(gate.status, 2);
+      assert.match(gate.stderr, new RegExp(status));
+      assert.equal(JSON.parse(gate.stdout).counts.passed, 2);
+    }
+    await save({ cases: [cases[0]], selection: { totalCases: 2, caseIds: [cases[0]!.id] } });
+    assert.equal(testGate().status, 2);
+    await save({ target: { name: 'other', url: 'http://127.0.0.1:4602' } });
+    assert.match(testGate().stderr, /ambiguous/);
+    const originalTarget = testGate('--target-fingerprint', fingerprint);
+    assert.equal(originalTarget.status, 2);
+    assert.equal(JSON.parse(originalTarget.stdout).counts['not-run'], 1);
+    await save({});
+    assert.equal(testGate('--target-fingerprint', fingerprint).status, 0);
+    assert.equal(testGate('--fail-on', 'failed').status, 1);
+    const unknown = await bundleAt(temp, 1);
+    await link(unknown.bundle, unknown.provenance, ['passed'], 'passed');
+    assert.equal(run(['results', unknown.bundle, '--require-pass']).status, 2);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
