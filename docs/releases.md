@@ -2,6 +2,10 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.6 — reviewed Flow QA workspace
+
+`prepare-run` verifies the analysis bundle and creates a fresh Flow QA workspace with its original flow and suite bytes. Original inputs and the profile can be checked during the same operation. A blocked or empty selection exits 2 before creating the directory. The operator chooses the target and initiates execution in Flow QA.
+
 ## 0.4.5 — interpret SDK batches and linked browser runs
 
 Reports and event traces now show whether the source marked an export partial and separately state that collection completeness is unverified. The readiness warning identifies the check that produced it when a trace also lists browser runs. The packaged skill shows how to copy a reviewed suite into an initialized Flow QA workspace and check its bytes before execution.

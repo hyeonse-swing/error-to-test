@@ -234,12 +234,12 @@ API는 `await refineBundle(directory, profileJsonText)`입니다. JSON 문자열
 ```sh
 node bin/error-to-test.mjs verify .error-to-test/example --input examples/errors.json --profile examples/profile.json
 node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --reviewed --out .error-to-test/reviewed
-cd .error-to-test/reviewed
-flow-qa validate cases/error-to-test.json
-flow-qa generate cases/error-to-test.json
-flow-qa init
-flow-qa ui
+node bin/error-to-test.mjs prepare-run .error-to-test/reviewed --out ./qa-run --input examples/errors.json --profile examples/profile.json
+flow-qa validate cases/error-to-test.json --workspace ./qa-run
+flow-qa ui --workspace ./qa-run
 ```
+
+새 작업 공간에 검토한 흐름과 TC의 원본 바이트를 보존하며 대상 설정은 비어 있습니다. 분석 폴더 밖의 새 경로를 지정하세요. 선택한 TC에 검토·맥락이 더 필요하거나 선택이 비어 있으면 종료 코드 2, 입력·출력 경로에 문제가 있으면 1을 반환합니다.
 
 실행 전에는 `readiness`로 **선택된 TC의 기록된 차단 사유**를 모아 확인할 수 있습니다.
 

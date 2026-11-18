@@ -94,6 +94,11 @@ export async function writeBundle(directory: string, analysis: Analysis, options
     ...(exported.suite ? { 'cases/error-to-test.json': jsonText(exported.suite) } : {}),
   };
   if (Buffer.byteLength(files['analysis.json']!) > 64 * 1024 * 1024 || Buffer.byteLength(report) > 64 * 1024 * 1024) throw new Error('The analysis artifacts exceed 64 MiB. Narrow the input or selected scenario details.');
+  return writeNewDirectory(directory, files);
+}
+
+/** Names come from our two fixed output layouts. The directory itself is reserved before any files are written. */
+export async function writeNewDirectory(directory: string, files: Record<string, string>): Promise<string[]> {
   const root = resolve(directory);
   await mkdir(dirname(root), { recursive: true });
   try { await mkdir(root, { mode: 0o700 }); }
@@ -101,8 +106,6 @@ export async function writeBundle(directory: string, analysis: Analysis, options
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The output directory already exists. Choose a new --out path.');
     throw error;
   }
-  // Exclusive files preserve any concurrent or user-supplied edits. A failed write leaves
-  // an inspectable partial bundle, never an apparently verified complete result.
   for (const [name, content] of Object.entries(files)) {
     await mkdir(dirname(resolve(root, name)), { recursive: true });
     await writeFile(resolve(root, name), content, { flag: 'wx', mode: 0o600 });
@@ -121,6 +124,8 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
   analysis: Record<string, unknown>;
   provenance: Record<string, unknown>;
   report: string;
+  flowText: string;
+  suiteText?: string;
   suite?: Record<string, unknown>;
   verification: { suite: boolean; reviewed: boolean; sourceChecked: boolean };
 }> {
@@ -149,14 +154,14 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
     return { caseId: candidate.id, candidateId: candidate.id, groupId: candidate.groupId, eventIds: candidate.eventIds };
   });
   if (JSON.stringify(mappings) !== JSON.stringify(provenance.mappings)) throw new Error('STALE_BUNDLE: Case provenance mappings no longer match the analysis.');
-  let suiteExists = false;
+  let suiteText: string | undefined;
   let verifiedSuite: Record<string, unknown> | undefined;
   if (provenance.suiteSha256 !== undefined) {
     const content = await readBoundedFile(resolve(root, 'cases/error-to-test.json'), 8 * 1024 * 1024);
     if (hash(content) !== provenance.suiteSha256) throw new Error('STALE_BUNDLE: The exported suite changed. Regenerate the bundle after review.');
     const suite = parse(content, 'suite'), suiteSource = record(suite.source, 'suite.source');
     if (suite.schemaVersion !== 'flow-qa/suite-1' || suiteSource.file !== 'flows/error-to-test.md' || suiteSource.sha256 !== provenance.flowSha256) throw new Error('STALE_BUNDLE: Suite source no longer matches the flow.');
-    suiteExists = true;
+    suiteText = content;
     verifiedSuite = suite;
   }
   if (options.input !== undefined) {
@@ -168,7 +173,7 @@ export async function readVerifiedBundle(directory: string, options: { input?: s
     if (!sameFiles || provided.sha256 !== text(provenance.inputSha256, 'provenance.inputSha256')) throw new Error('STALE_BUNDLE: Input changed since analysis. Supply every original file in the same order.');
   }
   if (options.profile !== undefined && hash(options.profile) !== provenance.profileSha256) throw new Error('STALE_BUNDLE: Profile changed since analysis.');
-  return { analysis, provenance, report, ...(verifiedSuite === undefined ? {} : { suite: verifiedSuite }), verification: { suite: suiteExists, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
+  return { analysis, provenance, report, flowText: flow, suiteText, ...(verifiedSuite === undefined ? {} : { suite: verifiedSuite }), verification: { suite: verifiedSuite !== undefined, reviewed: provenance.reviewed, sourceChecked: options.input !== undefined } };
 }
 export async function verifyBundle(directory: string, options: { input?: string | readonly string[]; profile?: string } = {}): Promise<{ suite: boolean; reviewed: boolean; sourceChecked: boolean }> {
   return (await readVerifiedBundle(directory, options)).verification;

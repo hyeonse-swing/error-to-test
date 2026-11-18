@@ -316,12 +316,12 @@ Default suites have a review question on every case. Read the artifacts, confirm
 ```sh
 node bin/error-to-test.mjs verify .error-to-test/example --input examples/errors.json --profile examples/profile.json
 node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --reviewed --out .error-to-test/reviewed
-cd .error-to-test/reviewed
-flow-qa validate cases/error-to-test.json
-flow-qa generate cases/error-to-test.json
-flow-qa init
-flow-qa ui
+node bin/error-to-test.mjs prepare-run .error-to-test/reviewed --out ./qa-run --input examples/errors.json --profile examples/profile.json
+flow-qa validate cases/error-to-test.json --workspace ./qa-run
+flow-qa ui --workspace ./qa-run
 ```
+
+The new workspace contains the reviewed flow and suite with their original bytes and an empty target configuration. Choose a fresh path outside the bundle. Exit 2 means at least one selected case still needs review or context, or the selection is empty. Exit 1 indicates invalid input or an output conflict.
 
 Flow QA is installed/configured separately. Its UI can read this `flows/` + `cases/` layout. Select the intended test target, review the cases in Flow QA, and execute there or with its CLI. Source changes invalidate existing bundles/suites; regenerate after review. `verify` checks artifact consistency, and checks original input/profile bytes only when supplied. It is not a signature or proof that a testcase fixes the reported cause. A passing functional assertion does not automatically close an error issue.
 

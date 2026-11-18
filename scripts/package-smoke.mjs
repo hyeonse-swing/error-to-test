@@ -123,6 +123,12 @@ try {
   assert.equal(readySummary.status, 'ready');
   assert.equal(readySummary.counts.ready, 2);
   assert.ok(readySummary.cases.every(test => test.blockers.length === 0));
+  const prepared = join(temp, 'prepared');
+  runCli(['prepare-run', executionReady, '--out', prepared, '--input', extensionInput, '--profile', expandedFile]);
+  for (const file of ['cases/error-to-test.json', 'flows/error-to-test.md']) {
+    assert.deepEqual(await readFile(join(prepared, file)), await readFile(join(executionReady, file)));
+  }
+  assert.deepEqual(JSON.parse(await readFile(join(prepared, 'flowqa.config.json'), 'utf8')).targets, {});
   const replacementProfileFile = join(temp, 'replacement-profile.json');
   const replacementProfile = JSON.parse(JSON.stringify(expanded));
   replacementProfile.name = 'Confirmed replacement profile';

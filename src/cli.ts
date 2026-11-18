@@ -4,13 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { analyzeErrors, analyzeWithBaseline, type AnalyzeOptions } from './analysis.ts';
-import { jsonText, readBoundedFile, readVerifiedBundle, verifyBundle, writeBundle } from './artifacts.ts';
+import { jsonText, readBoundedFile, readVerifiedBundle, writeNewDirectory, writeBundle } from './artifacts.ts';
 import { compareBundles, renderComparison } from './comparison.ts';
 import { createProfileTemplate } from './profile-template.ts';
 import { redactText } from './redact.ts';
 import { linkFlowQaReport } from './results.ts';
 import { readRunSummary, renderRunSummary } from './run-summary.ts';
-import { readReadiness, renderReadiness } from './readiness.ts';
+import { readReadiness, renderReadiness, summarizeReadiness } from './readiness.ts';
 import { readCoverage, renderCoverage } from './coverage.ts';
 import { readEventTrace, renderEventTrace } from './trace.ts';
 import { refineBundle } from './refinement.ts';
@@ -27,6 +27,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test analyze --error "TypeError: item is undefined" --page /items --out new-directory
   cat error.txt | error-to-test analyze --input - --format text --out new-directory
   error-to-test verify new-directory [--input errors-1.json --input errors-2.json] [--profile profile.json]
+  error-to-test prepare-run reviewed-bundle --out new-workspace [--input errors.json] [--profile profile.json]
   error-to-test init-profile new-directory --out profile.json
   error-to-test init-profile new-directory --profile existing.json --out extended.json
   error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
@@ -114,11 +115,11 @@ async function writeGateOutput(content: string): Promise<void> {
 }
 const resultsGateStatuses = ['failed', 'flaky', 'blocked', 'skipped', 'error', 'not-run'] as const;
 type ResultsGateStatus = typeof resultsGateStatuses[number];
-async function inputContents(paths: string[], allowStdin: boolean): Promise<string | readonly string[]> {
+async function inputContents(paths: string[], command: 'analyze' | 'verify' | 'prepare-run'): Promise<string | readonly string[]> {
   if (paths.length < 1 || paths.length > 50) throw new Error('Provide between 1 and 50 --input files.');
   if (paths.some(path => !path.trim())) throw new Error('--input requires a nonempty file path.');
   if (paths.includes('-')) {
-    if (!allowStdin) throw new Error('verify --input - is not supported. Supply the original file.');
+    if (command !== 'analyze') throw new Error(`${command} --input - is not supported. Supply the original file.`);
     if (paths.length !== 1) throw new Error('--input - must be the sole input.');
     return stdinText();
   }
@@ -172,7 +173,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, coverage, or trace. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, prepare-run, link-run, results, compare, readiness, coverage, or trace. See --help.');
     process.stdout.write(help);
     return;
   }
@@ -378,17 +379,41 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     finishGate();
     return;
   }
-  if (command === 'verify') {
-    if (positionals.length !== 2 || !positionals[1]) throw new Error('verify requires one bundle directory.');
-    if (Object.keys(values).some(key => !['input', 'profile', 'help'].includes(key))) throw new Error('Unsupported option for verify.');
-    const result = await verifyBundle(resolve(positionals[1]), {
-      ...(values.input ? { input: await inputContents(values.input, false) } : {}),
+  if (command === 'verify' || command === 'prepare-run') {
+    if (positionals.length !== 2 || !positionals[1]?.trim()) throw new Error(`${command} requires one bundle directory.`);
+    const allowed = command === 'prepare-run' ? ['input', 'profile', 'out', 'help'] : ['input', 'profile', 'help'];
+    if (Object.keys(values).some(key => !allowed.includes(key))) throw new Error(`Unsupported option for ${command}.`);
+    if (command === 'prepare-run' && !values.out?.trim()) throw new Error('prepare-run requires --out NEW_WORKSPACE.');
+    if (values.profile !== undefined && !values.profile.trim()) throw new Error('--profile requires a nonempty file path.');
+    const directory = resolve(positionals[1]);
+    const snapshot = await readVerifiedBundle(directory, {
+      ...(values.input ? { input: await inputContents(values.input, command) } : {}),
       ...(values.profile ? { profile: await readBoundedFile(resolve(values.profile), 1024 * 1024) } : {}),
     });
-    process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
+    const result = snapshot.verification;
+    if (command === 'verify') {
+      process.stdout.write(`Bundle verified. Suite: ${result.suite ? 'present' : 'none'}; review: ${result.reviewed ? 'acknowledged' : 'pending'}; original input: ${result.sourceChecked ? 'checked' : 'not supplied'}.\n`);
+      return;
+    }
+    const readiness = summarizeReadiness(snapshot);
+    if (readiness.status !== 'ready' || snapshot.suiteText === undefined) {
+      process.stderr.write(`Workspace not created. Readiness: ${readiness.status}. Run error-to-test readiness on the bundle to inspect blockers.\n`);
+      process.exitCode = 2;
+      return;
+    }
+    const out = await canonicalOutput(resolve(values.out!));
+    if (insideBundle(await realpath(directory), out)) throw new Error('Choose a new workspace outside the source bundle.');
+    await writeNewDirectory(out, {
+      'flows/error-to-test.md': snapshot.flowText,
+      'cases/error-to-test.json': snapshot.suiteText,
+      '.gitignore': '.flowqa/\n.env\n.env.*\n',
+      // Publish the config last so a partial write cannot be used to run the suite.
+      'flowqa.config.json': jsonText({ schemaVersion: 'flow-qa/config-1', targets: {} }),
+    });
+    process.stdout.write(`Flow QA workspace: ${out}\nReviewed cases: ${readiness.counts.ready}. Suite SHA-256: ${readiness.suiteSha256}\nOriginal input: ${result.sourceChecked ? 'checked' : 'not supplied'}. No target selected or browser run.\nConnect your chosen target in this workspace. Run cases/error-to-test.json, then use link-run with the original analysis bundle.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, link-run, results, compare, readiness, coverage, or trace. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, prepare-run, link-run, results, compare, readiness, coverage, or trace. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
   if (values['target-fingerprint'] !== undefined) throw new Error('--target-fingerprint applies to results only.');
@@ -417,7 +442,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     inputFormat = 'json';
   } else {
     if (values.reproduce || values.precondition || values.expected || values['expected-source']) throw new Error('Reported context options require --error. Use manual JSON or a profile for file input.');
-    content = await inputContents(values.input!, true);
+    content = await inputContents(values.input!, 'analyze');
   }
   const options: AnalyzeOptions = {
     format: inputFormat, ...(values.profile ? { profile: await readBoundedFile(resolve(values.profile), 1024 * 1024) } : {}),

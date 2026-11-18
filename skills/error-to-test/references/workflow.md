@@ -40,18 +40,19 @@ The template is `error-to-test/profile-1` and intentionally incomplete. Each sce
 
 ## Flow QA handoff and results
 
-Handoff includes `report.md`, `analysis.json`, `provenance.json`, and, when selected candidates exist, `flows/error-to-test.md` and `cases/error-to-test.json`. Verify source/profile bytes if available. Record input kind, filters, partial flag, unknown retention, selected versus all observed groups, unresolved questions, review status, and exact target the operator chose. The bundle itself does not run a browser or select a target. Flow QA resolves the suite's source-flow path against its workspace. Flow QA can validate the suite directly in the analysis directory. To connect a target and run the case, use an initialized Flow QA workspace containing `flowqa.config.json`. In a fresh workspace, preserve both generated files at their original relative paths.
+Handoff includes `report.md`, `analysis.json`, `provenance.json`, and, when selected candidates exist, `flows/error-to-test.md` and `cases/error-to-test.json`. Verify source/profile bytes if available. Record input kind, filters, partial flag, unknown retention, selected versus all observed groups, unresolved questions, review status, and exact target the operator chose. The bundle itself does not run a browser or select a target. Prepare an empty-target workspace from the reviewed bundle. Supply each original input in order and the profile if available.
 
 ```sh
-flow-qa init ./qa-run
-cp -n ./reviewed-analysis/flows/error-to-test.md ./qa-run/flows/error-to-test.md
-cp -n ./reviewed-analysis/cases/error-to-test.json ./qa-run/cases/error-to-test.json
-cmp ./reviewed-analysis/flows/error-to-test.md ./qa-run/flows/error-to-test.md &&
-  cmp ./reviewed-analysis/cases/error-to-test.json ./qa-run/cases/error-to-test.json &&
-  flow-qa validate cases/error-to-test.json --workspace ./qa-run
+error-to-test prepare-run ./reviewed-analysis --out ./qa-run --input errors.json --profile ./review-profile.json
+flow-qa validate cases/error-to-test.json --workspace ./qa-run
 ```
 
-If either comparison reports a difference, choose a fresh directory and copy both files again. Once validation succeeds, use the same `--workspace ./qa-run` for Flow QA’s `connect` and `run` commands.
+Choose a new path outside the bundle. The workspace holds the verified source flow and suite, a local ignore file and a config with zero targets. Exit 2 means the selection is blocked or empty. Use `readiness` to see which cases need attention. Exit 1 means verification or writing failed. Once prepared, connect the user's chosen target and run in the same workspace. For example, with the authorized preview URL in `PREVIEW_URL`:
+
+```sh
+flow-qa connect preview --url "$PREVIEW_URL" --workspace ./qa-run
+flow-qa run cases/error-to-test.json --workspace ./qa-run --target preview
+```
 
 After Flow QA runs the exported suite on that chosen target and writes a normalized `flow-qa/report-1` report:
 

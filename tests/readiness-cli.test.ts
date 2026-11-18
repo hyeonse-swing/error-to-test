@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,5 +117,58 @@ test('readiness treats a closed stdout as an output error instead of a readiness
     assert.equal(result.code, 1, result.stderr);
     assert.match(result.stderr, /Error to Test:/);
     assert.doesNotMatch(result.stderr, /Unhandled|unhandled|Readiness (ready|blocked)/);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('prepare-run exports only a fully reviewed selection and preserves the verified flow and suite', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-prepare-'));
+  try {
+    const content = JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [JSON.parse(input).errors[0]] });
+    const original = join(temp, 'input.json');
+    const profileFile = join(temp, 'profile.json');
+    await writeFile(original, content);
+    await writeFile(profileFile, profile);
+    const bundle = join(temp, 'reviewed');
+    await writeBundle(bundle, analyzeErrors(content, { profile }), { reviewed: true });
+    const workspace = join(temp, 'prepared');
+    const prepare = (out: string, args: string[] = []) => run(['prepare-run', bundle, '--out', out, ...args]);
+    for (const [name, analysis, reviewed] of [
+      ['pending', analyzeErrors(content, { profile }), false],
+      ['mixed', analyzeErrors(input, { profile }), true],
+      ['empty', analyzeErrors(content, { minCount: 2 }), true],
+    ] as const) {
+      const source = join(temp, name);
+      await writeBundle(source, analysis, { reviewed });
+      const result = run(['prepare-run', source, '--out', workspace]);
+      assert.equal(result.status, 2, result.stderr);
+      assert.match(result.stderr, /readiness/i);
+      await assert.rejects(readdir(workspace), { code: 'ENOENT' });
+    }
+    const badOriginal = prepare(workspace, ['--input', profileFile]);
+    assert.equal(badOriginal.status, 1);
+    assert.match(badOriginal.stderr, /STALE_BUNDLE/);
+    assert.equal(prepare(workspace, ['--profile', original]).status, 1);
+    await assert.rejects(readdir(workspace), { code: 'ENOENT' });
+    assert.equal(prepare(join(bundle, 'nested')).status, 1);
+    const alias = join(temp, 'bundle-alias');
+    await symlink(bundle, alias, 'junction');
+    assert.equal(prepare(join(alias, 'nested')).status, 1);
+    await assert.rejects(readdir(join(bundle, 'nested')), { code: 'ENOENT' });
+    const result = prepare(workspace, ['--input', original, '--profile', profileFile]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Original input: checked/);
+    assert.deepEqual((await readdir(workspace)).sort(), ['.gitignore', 'cases', 'flowqa.config.json', 'flows']);
+    assert.deepEqual(JSON.parse(await readFile(join(workspace, 'flowqa.config.json'), 'utf8')), {
+      schemaVersion: 'flow-qa/config-1', targets: {},
+    });
+    for (const file of ['flows/error-to-test.md', 'cases/error-to-test.json']) {
+      assert.deepEqual(await readFile(join(workspace, file)), await readFile(join(bundle, file)));
+    }
+    await writeFile(join(workspace, 'flowqa.config.json'), 'existing work');
+    assert.equal(prepare(workspace).status, 1);
+    assert.equal(await readFile(join(workspace, 'flowqa.config.json'), 'utf8'), 'existing work');
+    await writeFile(join(bundle, 'cases/error-to-test.json'), '{}');
+    assert.equal(prepare(join(temp, 'tampered')).status, 1);
+    await assert.rejects(readdir(join(temp, 'tampered')), { code: 'ENOENT' });
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
