@@ -2,6 +2,10 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.4.4 — linked result consistency and publication
+
+`link-run` rejects a `passed` run containing a failed, flaky, blocked, skipped, or error case; stored result readers apply the same check. Completed results are written under a temporary name and published atomically without replacing a concurrent run ID. A result larger than the reader's 2 MiB limit is rejected before publication. `trace` directs readers to the linked outcome once a case has a result instead of suggesting the case has not run. Existing blocked, failed, interrupted, and error runs retain their established meaning.
+
 ## 0.4.3 — saved event ID trace
 
 `trace` and `readEventTrace()` connect a Browser Error Log ID to all matching observed groups, selected TC candidates, review blockers, and the latest linked case outcome. Matching across projects, unselected groups, partial input, unknown IDs, and target-scoped results remain explicit. The read-only `error-to-test/trace-1` output omits raw error messages and stacks; an absent ID means only that it was not in the saved analysis input. See [the research record](event-trace-research-2026-11-18.md) for the observed gap and choice. The local check passed 209 tests, type checking and build. The installed tarball smoke exercised the CLI and API. A saved 0.4.2 bundle also resolved an event ID to its latest linked passing case.

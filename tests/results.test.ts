@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -37,7 +37,57 @@ test('run linkage binds exact suite/cases, redacts reasons, preserves old result
     await assert.rejects(linkFlowQaReport(out, { ...raw, runId: randomUUID(), suiteHash: 'f'.repeat(64) }), /different suite/);
     await assert.rejects(linkFlowQaReport(out, { ...raw, runId: randomUUID(), cases: [] }), /every exported case/);
     await assert.rejects(linkFlowQaReport(out, { ...raw, runId: randomUUID(), cases: [{ id: 'other', status: 'passed' }] }), /unknown/);
-    await assert.rejects(linkFlowQaReport(out, { ...raw, runId: randomUUID(), status: 'passed', cases: [{ id: provenance.mappings[0].caseId, status: 'failed' }] }), /contradicts/);
+    for (const status of ['failed', 'flaky', 'blocked', 'skipped', 'error']) {
+      const invalid = { ...raw, runId: randomUUID(), status: 'passed', cases: [{ id: provenance.mappings[0].caseId, status }] };
+      await assert.rejects(linkFlowQaReport(out, invalid), /contradicts/);
+      await assert.rejects(stat(join(out, 'results', `${invalid.runId}.json`)), { code: 'ENOENT' });
+    }
+    assert.deepEqual(await readdir(join(out, 'results')), [`${raw.runId}.json`]);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('linking refuses a result too large for later summary reads', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-large-result-'));
+  try {
+    const out = join(temp, 'bundle');
+    const analysis = analyzeErrors('Error: observed');
+    analysis.candidates = Array.from({ length: 100 }, (_, index) => ({ ...analysis.candidates[0]!, id: `TC_${index}` }));
+    await writeBundle(out, analysis);
+    const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    const runId = randomUUID();
+    const oversized = {
+      schemaVersion: 'flow-qa/report-1', runId, suiteHash: provenance.suiteSha256,
+      startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z', status: 'blocked',
+      cases: provenance.mappings.map((item: { caseId: string }) => ({ id: item.caseId, status: 'blocked', reason: '가'.repeat(8192) })),
+    };
+    await assert.rejects(linkFlowQaReport(out, oversized), /exceeds 2 MiB/);
+    await assert.rejects(stat(join(out, 'results', `${runId}.json`)), { code: 'ENOENT' });
+    assert.equal((await readRunSummary(out)).runCount, 0);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('concurrent links publish one complete result without replacing it', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-concurrent-link-'));
+  try {
+    const out = join(temp, 'bundle');
+    await writeBundle(out, analyzeErrors('Error: observed'));
+    const provenance = JSON.parse(await readFile(join(out, 'provenance.json'), 'utf8'));
+    const runId = randomUUID();
+    const base = {
+      schemaVersion: 'flow-qa/report-1', runId, suiteHash: provenance.suiteSha256,
+      startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z',
+      cases: [{ id: provenance.mappings[0].caseId, status: 'passed' }],
+    };
+    const outcomes = await Promise.allSettled([
+      linkFlowQaReport(out, { ...base, status: 'passed' }),
+      linkFlowQaReport(out, { ...base, status: 'failed', cases: [{ id: base.cases[0]!.id, status: 'failed' }] }),
+    ]);
+    assert.equal(outcomes.filter(item => item.status === 'fulfilled').length, 1);
+    assert.equal(outcomes.filter(item => item.status === 'rejected').length, 1);
+    const result = await readRunSummary(out);
+    assert.equal(result.runCount, 1);
+    assert.equal(result.counts.passed + result.counts.failed, 1);
+    assert.deepEqual(await readdir(join(out, 'results')), [`${runId}.json`]);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 

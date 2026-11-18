@@ -110,11 +110,14 @@ export async function readEventTrace(directory: string, eventId: string, options
     if (covered.caseIds.length !== cases.length || covered.caseIds.some(id => !cases.some(item => item.caseId === id))) {
       throw new Error('STALE_BUNDLE: The event case selection is inconsistent.');
     }
+    const nextAction = covered.status === 'review-ready' && cases.some(item => item.status !== 'not-run')
+      ? 'Review the latest linked case outcome and its target scope before deciding whether to rerun.'
+      : covered.nextAction;
     matches.push({ groupId, project: redactText(text(group.project, `analysis.groups[${index}].project`)),
       environment: redactText(text(group.environment, `analysis.groups[${index}].environment`)),
       release: redactText(text(group.release, `analysis.groups[${index}].release`)),
       suppliedRecords: covered.suppliedRecords, status: covered.status, reasons: covered.reasons,
-      nextAction: covered.nextAction, cases });
+      nextAction, cases });
   });
 
   const warnings = [...new Set([

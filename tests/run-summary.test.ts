@@ -269,7 +269,8 @@ test('every linked file is validated, including old results when a valid newer r
       ['case status', value => { value.cases[0].status = 'resolved'; }, /invalid case status/],
       ['time order', value => { value.finishedAt = '2026-10-12T00:00:00Z'; }, /before it started/],
       ['invalid time', value => { value.finishedAt = 'not-a-time'; }, /timestamp/],
-      ['contradictory pass', value => { value.status = 'passed'; value.cases[0].status = 'failed'; }, /contradicts/],
+      ...['failed', 'flaky', 'blocked', 'skipped', 'error'].map(status =>
+        [`contradictory pass with ${status}`, (value: any) => { value.status = 'passed'; value.cases[0].status = status; }, /contradicts/] as [string, (value: any) => void, RegExp]),
     ];
     for (const [label, mutate, error] of variants) {
       const changed = structuredClone(original);

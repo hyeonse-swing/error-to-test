@@ -37,7 +37,7 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const safeIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 const shaPattern = /^[0-9a-f]{64}$/;
 const maxEntries = 1000;
-const maxResultBytes = 2 * 1024 * 1024;
+export const MAX_LINKED_RESULT_BYTES = 2 * 1024 * 1024;
 const maxTotalBytes = 64 * 1024 * 1024;
 
 type Mapping = { caseId: string; candidateId: string; groupId: string; eventIds: string[] };
@@ -74,20 +74,20 @@ function sameFile(a: { dev: number; ino: number }, b: { dev: number; ino: number
 async function readResultFile(path: string, name: string): Promise<{ content: string; bytes: number }> {
   const before = await lstat(path);
   if (!before.isFile() || before.isSymbolicLink()) throw new Error(`Linked result ${name} must be a regular file, not a link or directory.`);
-  if (before.size > maxResultBytes) throw new Error(`Linked result ${name} exceeds 2 MiB.`);
+  if (before.size > MAX_LINKED_RESULT_BYTES) throw new Error(`Linked result ${name} exceeds 2 MiB.`);
   const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
     const opened = await handle.stat();
     if (!opened.isFile() || !sameFile(before, opened)) throw new Error(`Linked result ${name} changed while opening.`);
-    if (opened.size > maxResultBytes) throw new Error(`Linked result ${name} exceeds 2 MiB.`);
+    if (opened.size > MAX_LINKED_RESULT_BYTES) throw new Error(`Linked result ${name} exceeds 2 MiB.`);
     const chunks: Buffer[] = [];
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let bytes = 0;
     while (true) {
-      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, maxResultBytes + 1 - bytes), null);
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, MAX_LINKED_RESULT_BYTES + 1 - bytes), null);
       if (!bytesRead) break;
       bytes += bytesRead;
-      if (bytes > maxResultBytes) throw new Error(`Linked result ${name} exceeds 2 MiB.`);
+      if (bytes > MAX_LINKED_RESULT_BYTES) throw new Error(`Linked result ${name} exceeds 2 MiB.`);
       chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
     }
     const after = await handle.stat();
@@ -140,7 +140,7 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
   });
   const selection = validateResultSelection(raw.selection, Object.hasOwn(raw, 'selection'),
     cases.map(item => item.caseId), new Set(expected.keys()), 'Linked result');
-  if (status === 'passed' && cases.some(item => item.status === 'failed' || item.status === 'error')) {
+  if (status === 'passed' && cases.some(item => item.status !== 'passed')) {
     throw new Error(`Linked result ${name} contradicts its case results.`);
   }
   return { runId, status: status as LinkedRunStatus, startedAt, finishedAt,

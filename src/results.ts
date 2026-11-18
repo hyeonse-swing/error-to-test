@@ -1,9 +1,11 @@
-import { lstat, mkdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { link, lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { jsonText, readVerifiedBundle } from './artifacts.ts';
 import { record, text, timestamp } from './validation.ts';
 import { redactText } from './redact.ts';
 import { reportedTargetIdentity, validateResultSelection } from './result-selection.ts';
+import { MAX_LINKED_RESULT_BYTES } from './run-summary.ts';
 
 const runStatuses = new Set(['passed', 'failed', 'blocked', 'error', 'interrupted']);
 const caseStatuses = new Set(['passed', 'failed', 'flaky', 'blocked', 'skipped', 'error']);
@@ -47,7 +49,7 @@ export async function linkFlowQaReport(directory: string, rawReport: unknown): P
   });
   const selection = validateResultSelection(report.selection, Object.hasOwn(report, 'selection'),
     reportCaseIds, new Set(expected.keys() as Iterable<string>), 'Flow QA report');
-  if (status === 'passed' && cases.some(item => item.status === 'failed' || item.status === 'error')) throw new Error('The report status contradicts its case results.');
+  if (status === 'passed' && cases.some(item => item.status !== 'passed')) throw new Error('The report status contradicts its case results.');
   const startedAt = timestamp(report.startedAt, 'report.startedAt'), finishedAt = timestamp(report.finishedAt, 'report.finishedAt');
   if (finishedAt < startedAt) throw new Error('The run finished before its start timestamp.');
   const output = {
@@ -58,6 +60,8 @@ export async function linkFlowQaReport(directory: string, rawReport: unknown): P
     ...(selection === undefined ? {} : { selection }), cases,
     note: 'These results cover the specified assertions. No source issue was automatically closed.',
   };
+  const content = jsonText(output);
+  if (Buffer.byteLength(content) > MAX_LINKED_RESULT_BYTES) throw new Error('Linked result exceeds 2 MiB.');
   const resultsRoot = resolve(root, 'results');
   try { await mkdir(resultsRoot, { mode: 0o700 }); }
   catch (error) {
@@ -66,6 +70,16 @@ export async function linkFlowQaReport(directory: string, rawReport: unknown): P
     if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Results must be stored in a real directory inside this bundle.');
   }
   const file = resolve(resultsRoot, `${runId}.json`);
-  await writeFile(file, jsonText(output), { flag: 'wx', mode: 0o600 });
+  const pending = resolve(resultsRoot, `.${runId}-${randomUUID()}.pending`);
+  let published = false;
+  try {
+    await writeFile(pending, content, { flag: 'wx', mode: 0o600 });
+    // A hard link publishes the complete file without replacing a concurrent run ID.
+    await link(pending, file);
+    published = true;
+  } finally {
+    try { await rm(pending, { force: true }); }
+    catch (error) { if (!published) throw error; }
+  }
   return file;
 }

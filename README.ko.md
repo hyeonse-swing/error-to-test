@@ -285,7 +285,7 @@ Flow QA 설치와 실행 대상 설정은 별도로 필요합니다. 위 `flows/
 
 실행 후 `node bin/error-to-test.mjs link-run .error-to-test/reviewed --report /path/to/qa-report.json`으로 결과를 원래 오류 묶음에 연결할 수 있습니다. suite 해시가 일치해야 하며 전체 실행은 모든 case ID를 포함해야 합니다. 일부 케이스만 실행한 Flow QA 보고서는 `selection.caseIds`가 보고된 케이스와 정확히 일치하고 `selection.totalCases`가 전체 suite 크기와 일치할 때 연결합니다. 알 수 없는·중복된 ID와 선택 선언 없는 누락은 거부합니다. 결과는 `results/<runId>.json`에 저장합니다. 원본 e2e 리포트 대신 Flow QA가 정리한 `report-1`을 사용하세요.
 
-선택 실행 결과에는 `selection: { mode: 'selected', totalCases, selectedCaseIds }`를 기록하며 요약의 최신 실행에도 포함합니다. 기존 전체 실행 결과는 계속 읽을 수 있고, 새 선택 실행 결과는 이 버전 이상의 reader가 필요합니다. 이전 reader는 추가 필드를 거부합니다. 최신 실행에서 빠진 케이스는 과거에 통과했어도 `not-run`이며, 미실행을 CI 실패로 처리하려면 `results --fail-on not-run`을 사용하세요.
+전체 실행 상태가 `passed`라면 보고된 모든 케이스도 `passed`여야 합니다. 모순된 보고서는 연결하지 않습니다. 선택 실행 결과에는 `selection: { mode: 'selected', totalCases, selectedCaseIds }`를 기록하며 요약의 최신 실행에도 포함합니다. 기존 전체 실행 결과는 계속 읽을 수 있고, 새 선택 실행 결과는 이 버전 이상의 reader가 필요합니다. 이전 reader는 추가 필드를 거부합니다. 최신 실행에서 빠진 케이스는 과거에 통과했어도 `not-run`이며, 미실행을 CI 실패로 처리하려면 `results --fail-on not-run`을 사용하세요.
 
 보고서에 필요한 정보가 모두 있는 웹·모바일 실행 대상이 있으면 정제한 `targetName`과 `targetFingerprint`를 저장합니다. fingerprint는 Flow QA와 동일하게 웹 `{ kind: 'web', url }`, 모바일 `{ kind: 'mobile', platform, bundleId, device }`를 이 순서로 직렬화한 SHA-256입니다. 이름이 같아도 대상 정보가 다르면 서로 다른 실행으로 구별합니다. 대상 원본 값은 결과에 복사하지 않고 이름과 사유에서도 제거합니다. 다만 fingerprint는 대상을 아는 사람이 다시 계산해 대조할 수 있는 **안정적인 식별자이며 익명화가 아닙니다**. 이전 reader는 새 필드를 거부합니다. fingerprint가 없는 기존 전체·선택 실행 결과는 계속 읽지만 특정 대상 범위에는 넣지 않습니다. Flow QA가 초기 오류·중단을 빈 웹 URL로 보고하거나, 기기 지정이 없어 차단·중단된 모바일 실행을 빈 device로 보고한 경우에는 정제한 이름만 보존하고 fingerprint를 만들지 않습니다.
 
@@ -303,6 +303,8 @@ error-to-test results .error-to-test/reviewed --target-fingerprint "$TARGET_FING
 보고된 종료 시각이 가장 늦은 실행 하나를 기준으로 합니다. 종료 시각이 같으면 시작 시각, 실행 ID 순으로 결정하며 파일 수정 시각은 사용하지 않습니다. 필터가 없으면 기존처럼 전체 연결 실행 중 최신 하나를 고르고, 대상이 여러 개이거나 fingerprint가 없는 실행이 있으면 경고합니다. 대상 필터를 지정하면 대상 없는 실행과 이름만 저장한 기존 실행은 제외합니다. 여러 실행이나 다른 대상의 통과 결과를 섞지 않습니다. 연결된 실행이 있으면 검토 대기와 미확인 맥락도 표시하며, 결과를 원래 오류의 수정 완료나 실행 승인으로 취급하지 않습니다.
 
 출력 전에 번들과 연결 결과의 형식·원본/suite 해시·case/group/event 연결·상태·시각을 검사합니다. 오래된 결과라도 잘못된 JSON이 있으면 실패하며, 기존 산출물과 결과 파일은 수정하지 않습니다. 결과 폴더는 최대 1,000개 항목, 각 JSON은 2 MiB, 전체 결과는 64 MiB까지 지원합니다. 다른 확장자의 부수 파일은 무시하고 잘못된 JSON 이름·심볼릭 링크·일반 파일이 아닌 결과·한도 초과는 거부합니다. `--out`은 번들의 `results` 폴더 밖에 있는 새 파일만 허용합니다.
+
+이전에 저장한 결과에서 상태 모순 오류가 나면 원본 번들과 보고서를 보관하세요. 번들의 복사본에서 오류가 지목한 파일을 `results/` 밖으로 옮기고, 원래 Flow QA 보고서의 전체 상태와 케이스 결과가 일치하면 다시 연결하세요. 원본 보고서에도 모순이 있으면 테스트를 다시 실행해 새 결과를 연결하세요. 새 결과를 저장하는 파일시스템은 하드 링크를 지원해야 합니다.
 
 API에서는 `await readRunSummary(directory)`로 전체 요약을 읽고 `renderRunSummary(summary)`로 Markdown을 만듭니다. 대상별 조회는 `await readRunSummary(directory, { targetFingerprint: summary.targets[0].fingerprint })`를 사용합니다. `targets`가 비어 있으면 지정할 수 있는 대상이 없습니다.
 

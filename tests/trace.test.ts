@@ -44,6 +44,7 @@ test('one SDK ID traces every project, selected TC, latest target outcome, and p
     assert.equal(before.matches[0]?.status, 'review-ready');
     assert.equal(before.matches[0]?.cases[0]?.state, 'draft');
     assert.equal(before.matches[0]?.cases[0]?.status, 'not-run');
+    assert.match(before.matches[0]!.nextAction, /Run the exported suite/);
     assert.equal(before.matches[1]?.status, 'unselected');
     assert.deepEqual(before.matches[1]?.cases, []);
     assert.ok(!JSON.stringify(before).includes('Checkout failed'));
@@ -63,6 +64,7 @@ test('one SDK ID traces every project, selected TC, latest target outcome, and p
     await linkFlowQaReport(directory, report('https://two.example.test', 'failed', '2026-11-18T02:00:00Z'));
     const global = await readEventTrace(directory, 'shared');
     assert.equal(global.matches[0]?.cases[0]?.status, 'failed');
+    assert.match(global.matches[0]!.nextAction, /Review the latest linked case outcome/);
     assert.match(global.warnings.join(' '), /target fingerprints/);
     const scoped = await readEventTrace(directory, 'shared', { targetFingerprint: first.targetFingerprint });
     assert.equal(scoped.matches[0]?.cases[0]?.status, 'passed');
