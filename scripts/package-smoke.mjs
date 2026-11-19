@@ -11,6 +11,9 @@ const npmEnvironment = { ...process.env, npm_config_update_notifier: 'false', np
 try {
   const packed = JSON.parse(execFileSync('npm', ['pack', '--offline', '--ignore-scripts', '--json', '--cache', join(temp, 'cache'), '--pack-destination', temp], { cwd: root, encoding: 'utf8', env: npmEnvironment }));
   assert.ok(packed[0].files.every(file => !file.path.startsWith('node_modules/') && !file.path.startsWith('.error-to-test/')));
+  for (const file of ['dist/review-server.js', 'ui/review/index.html', 'ui/review/app.js', 'ui/review/style.css']) {
+    assert.ok(packed[0].files.some(entry => entry.path === file), `Missing installed review file: ${file}`);
+  }
   assert.ok(packed[0].files.some(file => file.path === 'dist/index.js'));
   assert.ok(packed[0].files.some(file => file.path === 'dist/coverage.js'));
   assert.ok(packed[0].files.some(file => file.path === 'dist/trace.js'));

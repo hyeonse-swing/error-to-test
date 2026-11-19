@@ -54,7 +54,7 @@ export function releaseDecision(version, previous, published, latest) {
 }
 
 export function changedRuntimeFiles(paths) {
-  return paths.filter(path => /^(src\/|bin\/|examples\/|LICENSE$|package\.json$|package-lock\.json$|tsconfig\.json$)/.test(path));
+  return paths.filter(path => /^(src\/|bin\/|ui\/review\/|examples\/|LICENSE$|package\.json$|package-lock\.json$|tsconfig\.json$)/.test(path));
 }
 
 export function prepareDecision(version, latest, changedPaths) {

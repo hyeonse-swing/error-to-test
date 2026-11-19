@@ -32,7 +32,7 @@ test('published version requires exact source SHA and unchanged runtime baseline
   npmRelease.confirmPublishedSource(metadata, sha.toUpperCase());
   assert.throws(() => npmRelease.confirmPublishedSource(metadata, otherSha), /does not match/);
   assert.throws(() => npmRelease.confirmPublishedSource(manifest('0.1.0'), sha), /valid gitHead/);
-  assert.deepEqual(npmRelease.changedRuntimeFiles(['README.md', '.github/workflows/ci.yml', 'src/index.ts', 'bin/error-to-test.mjs', 'package.json']), ['src/index.ts', 'bin/error-to-test.mjs', 'package.json']);
+  assert.deepEqual(npmRelease.changedRuntimeFiles(['README.md', '.github/workflows/ci.yml', 'src/index.ts', 'bin/error-to-test.mjs', 'ui/review/app.js', 'package.json']), ['src/index.ts', 'bin/error-to-test.mjs', 'ui/review/app.js', 'package.json']);
 });
 
 test('prepare auto patches runtime changes and skips docs or tests only', () => {

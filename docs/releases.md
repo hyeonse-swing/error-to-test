@@ -2,6 +2,10 @@
 
 Package: `@ihyeon/error-to-test` · Repository: [hyeonse-swing/error-to-test](https://github.com/hyeonse-swing/error-to-test) · Workflow: `.github/workflows/ci.yml`.
 
+## 0.5.0 — local candidate review
+
+Open a verified analysis with `error-to-test review BUNDLE --out NEW_DIRECTORY`. Inspect the evidence, save an unfinished draft, preview how profile edits affect selected cases, and review the new report and suite before acknowledging them. The same readiness and verification checks used by the CLI govern workspace creation. The original bundle and its linked runs stay intact.
+
 ## 0.4.7 — distinguish a passed case from a completed run
 
 `results --require-pass` checks that the latest run on the intended target completed with every exported case passing. An interrupted runner can preserve passing case results. The custom `--fail-on` case policy keeps its exit behavior and reports the overall run status when a case policy passes a non-passing run.

@@ -229,6 +229,21 @@ The API returns Markdown from one verified snapshot and does not write files or 
 
 ## Confirm the intended behavior
 
+### Review a saved bundle in the local browser
+
+After `analyze`, open the verified bundle in a loopback-only review session. Give each session a new output directory. Pass the original inputs in their original order to check their bytes. If the bundle was created with a profile, supply that same profile to preserve all existing rules.
+
+```sh
+error-to-test review ./initial-analysis --input errors.json --out ./local-review-1
+error-to-test review ./profiled-analysis --input errors.json --profile ./review-profile.json --out ./local-review-2
+```
+
+Open the URL printed by the command. Select an observed group to see its representative error and every connected test candidate. Groups outside the selection stay visible as observations. Edit the applicable rule's title, requirement, expected-result source, preconditions, setup confirmation, remaining questions and JSON test steps. A rule's scope and all matching groups appear beside the fields. The original error cannot establish expected behavior or substitute for an assertion.
+
+**Save draft** writes a new draft file in the session output. To resume, start a new session with a new output directory and `--draft PATH_TO_SAVED_DRAFT` against the same verified bundle. **Preview changes** checks the edited profile with the existing `refine` logic and shows all regenerated candidates and remaining questions. **Create profile and pending bundle** writes a new profile and bundle to the session output. Review its report and case suite in the browser before choosing **Confirm review**. This creates a second reviewed bundle. **Prepare Flow QA workspace** appears when the reviewed bundle's existing `readiness` result is `ready`. The workspace has an empty target configuration and no browser results.
+
+The page reports whether original input bytes were checked. Source questions and conflicts remain blockers until the original evidence is corrected and analyzed again. Keep the command running while reviewing. Review data stays on your computer in the selected output directory. The browser sends edits only to its loopback server.
+
 See [examples/profile.json](examples/profile.json). Profiles use `schemaVersion: "error-to-test/profile-1"`, a name, and up to 100 scenarios. Each scenario has a unique ID, title, at least one match predicate, a requirement, its `expectedSource`, and explicit steps. Set `setupConfirmed: true` only after confirming how preconditions are established. Preconditions are descriptions; this package does not prepare accounts or data.
 
 Supported web steps match Flow QA: `open`, `click`, `fill`, `act`, `assertVisible`, `assertText`, `assertUrl`, and `assertAgent`. Several matching rules produce several traceable candidates. Conflicts/questions in any original report are checked before representative evidence is sampled and stay blocked even when a profile matches.

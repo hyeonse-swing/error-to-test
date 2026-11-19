@@ -1,6 +1,6 @@
 {
   "name": "@ihyeon/error-to-test",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "Turn captured browser errors and pasted error reports into traceable regression test candidates.",
   "license": "MIT",
   "author": "Hyeonse Im",
@@ -41,6 +41,7 @@
   "files": [
     "dist",
     "bin/error-to-test.mjs",
+    "ui/review",
     "docs",
     "skills",
     "llms.txt",

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { analyzeErrors, analyzeWithBaseline, type AnalyzeOptions } from './analysis.ts';
-import { jsonText, readBoundedFile, readVerifiedBundle, writeNewDirectory, writeBundle } from './artifacts.ts';
+import { jsonText, readBoundedFile, readVerifiedBundle, writeBundle } from './artifacts.ts';
 import { compareBundles, renderComparison } from './comparison.ts';
 import { createProfileTemplate } from './profile-template.ts';
 import { redactText } from './redact.ts';
@@ -14,6 +14,8 @@ import { readReadiness, renderReadiness, summarizeReadiness } from './readiness.
 import { readCoverage, renderCoverage } from './coverage.ts';
 import { readEventTrace, renderEventTrace } from './trace.ts';
 import { refineBundle } from './refinement.ts';
+import { startReview } from './review-server.ts';
+import { writePreparedWorkspace } from './review-session.ts';
 import { readIssueReport } from './issue-report.ts';
 import type { Analysis, EventType, Runtime } from './types.ts';
 
@@ -30,6 +32,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test prepare-run reviewed-bundle --out new-workspace [--input errors.json] [--profile profile.json]
   error-to-test init-profile new-directory --out profile.json
   error-to-test init-profile new-directory --profile existing.json --out extended.json
+  error-to-test review BUNDLE --out NEW_REVIEW_DIRECTORY [--input FILE] [--profile ORIGINAL_PROFILE] [--draft SAVED_DRAFT] [--port 0]
   error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
   error-to-test issue new-directory --group GROUP_ID [--out issue.md]
   error-to-test link-run new-directory --report path/to/qa-report.json
@@ -175,6 +178,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
     top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'require-pass': { type: 'boolean' }, 'target-fingerprint': { type: 'string' }, 'event-id': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    draft: { type: 'string' }, port: { type: 'string' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
   } });
@@ -190,6 +194,23 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   const command = positionals[0];
+  if (command === 'review') {
+    if (positionals.length !== 2 || !positionals[1]?.trim() || !values.out?.trim()) throw new Error('review requires a bundle and --out NEW_REVIEW_DIRECTORY.');
+    if (Object.keys(values).some(key => !['out', 'input', 'profile', 'draft', 'port'].includes(key))) throw new Error('Unsupported option for review.');
+    const source = await realpath(resolve(positionals[1]));
+    const out = await canonicalOutput(resolve(values.out));
+    if (insideBundle(source, out)) throw new Error('Choose a new review directory outside the source bundle.');
+    const port = values.port === undefined ? 0 : Number(values.port);
+    if (values.port !== undefined && !/^\d+$/.test(values.port) || !Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error('Choose a valid loopback port.');
+    const { origin } = await startReview({ source, output: out,
+      input: values.input ? await inputContents(values.input, 'verify') : undefined,
+      profile: values.profile ? await readBoundedFile(resolve(values.profile), 1024 * 1024) : undefined,
+      draft: values.draft ? await readBoundedFile(resolve(values.draft), 1024 * 1024 + 1024) : undefined,
+    }, port);
+    process.stdout.write(`Open the local review: ${origin}/\nReview output: ${out}\nPress Ctrl+C to stop.\n`);
+    return;
+  }
+  if (values.draft !== undefined || values.port !== undefined) throw new Error('--draft and --port apply to review only.');
   if (command === 'issue') {
     if (positionals.length !== 2 || !positionals[1]?.trim() || values.group?.length !== 1) throw new Error('issue requires one bundle directory and exactly one --group GROUP_ID.');
     if (Object.keys(values).some(key => !['group', 'out', 'help'].includes(key))) throw new Error('Unsupported option for issue. Use only --group GROUP_ID and --out FILE.');
@@ -434,13 +455,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     }
     const out = await canonicalOutput(resolve(values.out!));
     if (insideBundle(await realpath(directory), out)) throw new Error('Choose a new workspace outside the source bundle.');
-    await writeNewDirectory(out, {
-      'flows/error-to-test.md': snapshot.flowText,
-      'cases/error-to-test.json': snapshot.suiteText,
-      '.gitignore': '.flowqa/\n.env\n.env.*\n',
-      // Publish the config last so a partial write cannot be used to run the suite.
-      'flowqa.config.json': jsonText({ schemaVersion: 'flow-qa/config-1', targets: {} }),
-    });
+    await writePreparedWorkspace(out, snapshot);
     process.stdout.write(`Flow QA workspace: ${out}\nReviewed cases: ${readiness.counts.ready}. Suite SHA-256: ${readiness.suiteSha256}\nOriginal input: ${result.sourceChecked ? 'checked' : 'not supplied'}. No target selected or browser run.\nConnect your chosen target in this workspace. Run cases/error-to-test.json, then use link-run with the original analysis bundle.\n`);
     return;
   }
