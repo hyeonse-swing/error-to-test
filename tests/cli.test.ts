@@ -52,6 +52,23 @@ test('global version aliases print the package version without a command', async
     assert.equal(result.stderr, '');
   }
 });
+test('link-run distinguishes a missing report from malformed JSON without creating results', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-report-input-'));
+  try {
+    const bundle = join(temp, 'bundle');
+    assert.equal(run(['analyze', '--error', 'Error: observed', '--out', bundle]).status, 0);
+    const missing = run(['link-run', bundle, '--report', join(temp, 'missing', 'qa-report.json')]);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /report file not found.*qa-report\.json/);
+    assert.doesNotMatch(missing.stderr, /within 2 MiB/);
+    const malformedPath = join(temp, 'qa-report.json');
+    await writeFile(malformedPath, '{invalid');
+    const malformed = run(['link-run', bundle, '--report', malformedPath]);
+    assert.equal(malformed.status, 1);
+    assert.match(malformed.stderr, /report contains invalid JSON/);
+    await assert.rejects(stat(join(bundle, 'results')), { code: 'ENOENT' });
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
 test('standalone error input produces a traceable blocked TC without SDK or model', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-cli-'));
   try {

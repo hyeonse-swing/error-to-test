@@ -251,9 +251,17 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (command === 'link-run') {
     if (positionals.length !== 2 || !positionals[1] || !values.report) throw new Error('link-run requires a bundle directory and --report.');
     if (Object.keys(values).some(key => key !== 'report' && key !== 'help')) throw new Error('Unsupported option for link-run.');
+    let reportText: string;
+    try { reportText = await readBoundedFile(resolve(values.report), 2 * 1024 * 1024); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('Flow QA report file not found. Use the qa-report.json path printed by flow-qa run.');
+      }
+      throw new Error('The Flow QA report must be a readable UTF-8 file within 2 MiB.');
+    }
     let report: unknown;
-    try { report = JSON.parse(await readBoundedFile(resolve(values.report), 2 * 1024 * 1024)); }
-    catch { throw new Error('The Flow QA report must be a JSON file within 2 MiB.'); }
+    try { report = JSON.parse(reportText); }
+    catch { throw new Error('The Flow QA report contains invalid JSON. Use qa-report.json from a completed Flow QA run.'); }
     const file = await linkFlowQaReport(resolve(positionals[1]), report);
     process.stdout.write(`Run linked: ${file}\nSource issues were not automatically closed.\n`);
     return;

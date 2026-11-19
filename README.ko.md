@@ -335,6 +335,6 @@ error-to-test results ./analysis --fail-on failed --fail-on error --fail-on not-
 
 알려진 자격증명·이메일·URL 인증/쿼리 정보는 결과에서 정제합니다. 민감정보가 포함된 실행 단계나 기대 결과는 변경해 통과시키지 않고 질문으로 남깁니다. 모든 개인정보를 제거한다고 보장하지 않으므로 실제 업무 데이터를 입력하기 전에는 별도로 정제하세요. 비공개 오류는 셸 기록에 남는 인자 대신 파일·표준 입력을 사용하세요.
 
-검증은 `npm run check`, `npm run check:package`입니다. `npm run smoke:ecosystem`은 현재 소스의 tarball과 공개 Browser Error Log 0.2.10·Flow QA 0.8.8을 새 환경에 설치합니다. Chromium에서 실제 JavaScript·resource 오류 수집, 검토 전 차단, 수정 전 실패·수정 후 통과, 선택 실행 재연결과 미실행 게이트, 설치된 UI·디자인 시스템 연결을 검사합니다. CI 릴리스도 이 검사를 통과해야 합니다. 결과는 `output/ecosystem/verification.json`에 기록하며 운영 서비스·실제 로그인·모델을 호출하지 않습니다.
+검증은 `npm run check`, `npm run check:package`입니다. `npm run smoke:ecosystem`은 현재 소스의 tarball과 공개 Browser Error Log 0.2.18·Flow QA 0.9.9를 새 환경에 설치합니다. Chromium에서 실제 JavaScript·resource 오류 수집, 검토 전 차단, 수정 전 실패·수정 후 통과, 선택 실행 재연결과 미실행 게이트, 설치된 UI·디자인 시스템 연결을 검사합니다. CI 릴리스도 이 검사를 통과해야 합니다. 결과는 `output/ecosystem/verification.json`에 기록하며 운영 서비스·실제 로그인·모델을 호출하지 않습니다.
 
 로컬 소스 조합은 `FLOW_QA_SOURCE=/path/to/flow-qa BROWSER_ERROR_SOURCE=/path/to/browser-error-log npm run smoke:flowqa`로 별도 검사할 수 있습니다. 자세한 입력 계약과 제한은 [영문 문서](README.md)에 있습니다.

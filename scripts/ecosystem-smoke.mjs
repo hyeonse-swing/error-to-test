@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Exact public consumer versions: update deliberately when auditing a new pair.
-const versions = { browserErrorLog: process.env.BROWSER_ERROR_LOG_RELEASE_VERSION ?? '0.2.12', flowQa: '0.9.0' };
+const versions = { browserErrorLog: process.env.BROWSER_ERROR_LOG_RELEASE_VERSION ?? '0.2.18', flowQa: '0.9.9' };
 assert.match(versions.browserErrorLog, /^\d+\.\d+\.\d+$/, 'BROWSER_ERROR_LOG_RELEASE_VERSION must be an exact stable version.');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = join(root, 'output/ecosystem');
