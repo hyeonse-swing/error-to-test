@@ -14,6 +14,8 @@ Ask your assistant: “Analyze this local error report with Error to Test. Show 
 
 ## Install
 
+Requires Node.js 22.23.5 or newer within Node 22, 24.22.3 or newer within Node 24, or Node.js 26.13.1 or newer. These minimums include the [November 2026 security updates](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases).
+
 ```sh
 npm install -g @ihyeon/error-to-test
 error-to-test --version
@@ -24,7 +26,7 @@ For the JavaScript API, install `npm install @ihyeon/error-to-test`. See [releas
 
 ## Run locally
 
-Requires Node.js 24.22.1 or newer within Node 24, or Node.js 26.12.1 or newer, with the [October 2026 security updates](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). From this directory, if you use nvm:
+The default development version in `.nvmrc` is Node 24.22.3. From this directory, if you use nvm:
 
 ```sh
 nvm install
