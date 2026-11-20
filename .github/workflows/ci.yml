@@ -56,10 +56,11 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [verify, ecosystem]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     outputs:
       release_sha: ${{ steps.prepare.outputs.release_sha }}
       release_candidate: ${{ steps.prepare.outputs.release_candidate }}
+      verified_version: ${{ steps.prepare.outputs.verified_version }}
     permissions:
       contents: write
     steps:
@@ -118,7 +119,10 @@ jobs:
         if: steps.release.outputs.release_candidate == 'true'
         run: node scripts/npm-release.mjs smoke
   github_release:
-    if: needs.publish.outputs.release_candidate == 'true'
+    if: >-
+      always() && !cancelled() && needs.prepare.result == 'success' &&
+      ((needs.publish.result == 'success' && needs.publish.outputs.release_candidate == 'true') ||
+       (needs.publish.result == 'skipped' && needs.prepare.outputs.release_candidate == 'false' && needs.prepare.outputs.verified_version != ''))
     needs: [prepare, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -137,6 +141,6 @@ jobs:
       - name: Create matching GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ERROR_TO_TEST_RELEASE_VERSION: ${{ needs.publish.outputs.version }}
-          ERROR_TO_TEST_RELEASE_CANDIDATE: ${{ needs.publish.outputs.release_candidate }}
+          ERROR_TO_TEST_RELEASE_VERSION: ${{ needs.publish.outputs.version || needs.prepare.outputs.verified_version }}
+          ERROR_TO_TEST_RELEASE_CANDIDATE: 'true'
         run: node scripts/github-release.mjs

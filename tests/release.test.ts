@@ -57,6 +57,18 @@ test('retry accepts only the direct bot patch of the original push', () => {
   assert.equal(npmRelease.canResumePublishedSource({}, sha), false);
 });
 
+test('recovery selects only the untagged published source with no later runtime changes', () => {
+  const published = { ...manifest('0.5.3'), gitHead: sha.toUpperCase() };
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published,
+    ['scripts/npm-release.mjs', '.github/workflows/ci.yml', 'tests/release.test.ts'], false), sha);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.4', published, [], false), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published, ['src/index.ts'], false), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published, [], true), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', {}, [], false), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', { ...published, name: '@other/error-to-test' }, [], false), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', { ...published, version: '0.5.2' }, [], false), null);
+});
+
 test('downloaded tarball must match registry SHA-512', async () => {
   const { createHash } = await import('node:crypto');
   const bytes = Buffer.from('published tarball');
@@ -64,6 +76,42 @@ test('downloaded tarball must match registry SHA-512', async () => {
   npmRelease.verifyTarballIntegrity(bytes, integrity);
   assert.throws(() => npmRelease.verifyTarballIntegrity(Buffer.from('changed'), integrity), /does not match/);
   assert.throws(() => npmRelease.verifyTarballIntegrity(bytes, undefined), /missing SHA-512/);
+});
+
+test('published tarball retries initial 404 only and validates digest before continuing', async () => {
+  const { createHash } = await import('node:crypto');
+  const bytes = Buffer.from('public tarball');
+  const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+  const response = (status: number, body = bytes) => ({
+    status, ok: status === 200, arrayBuffer: async () => body,
+  });
+  const statuses = [404, 404, 200];
+  let waits = 0;
+  const downloaded = await npmRelease.downloadPublishedTarball('https://registry.npmjs.org/package.tgz', integrity,
+    async () => response(statuses.shift()!), async (duration: number) => {
+      assert.equal(duration, 15_000);
+      waits++;
+    });
+  assert.deepEqual(downloaded, bytes);
+  assert.equal(waits, 2);
+  for (const status of [401, 429, 500]) {
+    let calls = 0;
+    await assert.rejects(npmRelease.downloadPublishedTarball('https://registry.npmjs.org/package.tgz', integrity,
+      async () => { calls++; return response(status); }, async () => { throw new Error('unexpected retry'); }),
+    new RegExp(`HTTP ${status}`));
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  await assert.rejects(npmRelease.downloadPublishedTarball('https://registry.npmjs.org/package.tgz', integrity,
+    async () => { calls++; return response(200, Buffer.from('changed')); }, async () => { throw new Error('unexpected retry'); }),
+  /integrity does not match/);
+  assert.equal(calls, 1);
+  calls = 0;
+  waits = 0;
+  await assert.rejects(npmRelease.downloadPublishedTarball('https://registry.npmjs.org/package.tgz', integrity,
+    async () => { calls++; return response(404); }, async () => { waits++; }), /HTTP 404/);
+  assert.equal(calls, 5);
+  assert.equal(waits, 4);
 });
 
 test('fresh consumer removes inherited npm auth and config', () => {

@@ -86,6 +86,13 @@ export function canResumePublishedSource(metadata, sourceSha) {
     metadata.gitHead.toLowerCase() === sourceSha.toLowerCase();
 }
 
+export function recoverySource(version, latest, metadata, changedPaths, tagPresent) {
+  if (latest !== version || metadata?.name !== NAME || metadata?.version !== version ||
+    !validCommitSha(metadata.gitHead) ||
+    changedRuntimeFiles(changedPaths).length || tagPresent) return null;
+  return metadata.gitHead.toLowerCase();
+}
+
 export function confirmPublishedSource(metadata, githubSha) {
   if (!validCommitSha(githubSha)) throw new Error('GITHUB_SHA must be a valid nonzero commit SHA');
   if (!validCommitSha(metadata?.gitHead)) throw new Error('npm registry metadata is missing a valid gitHead');
@@ -174,16 +181,28 @@ export async function installPublishedPackage(temp, version, env, run = execFile
   }
 }
 
+export async function downloadPublishedTarball(url, integrity, request = fetch, pause = ms => new Promise(done => setTimeout(done, ms))) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const response = await request(url, { signal: AbortSignal.timeout(30_000) });
+    if (response.status === 404 && attempt < 5) {
+      console.log(`npm tarball is not available yet; retrying (${attempt}/4)`);
+      await pause(15_000);
+      continue;
+    }
+    if (!response.ok) throw new Error(`npm tarball download: HTTP ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    verifyTarballIntegrity(bytes, integrity);
+    return bytes;
+  }
+}
+
 async function smokePublishedPackage(version, githubSha) {
   const metadata = await registryMetadata(version);
   confirmPublishedSource(metadata, githubSha);
   if (typeof metadata.dist?.tarball !== 'string' || !metadata.dist.tarball.startsWith('https://registry.npmjs.org/')) {
     throw new Error('npm registry metadata has no trusted tarball URL');
   }
-  const response = await fetch(metadata.dist.tarball, { signal: AbortSignal.timeout(30_000) });
-  if (!response.ok) throw new Error(`npm tarball download: HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  verifyTarballIntegrity(bytes, metadata.dist.integrity);
+  await downloadPublishedTarball(metadata.dist.tarball, metadata.dist.integrity);
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-release-'));
   try {
     await writeFile(join(temp, 'package.json'), '{"type":"module","private":true}\n');
@@ -244,6 +263,19 @@ async function main() {
       changed = execFileSync('git', ['diff', '--name-only', `${baseline}..${sourceSha}`], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
     }
     const decision = prepareDecision(version, latest, changed);
+    if (decision.action === 'skip' && published) {
+      const tag = execFileSync('git', ['ls-remote', '--tags', 'origin', `refs/tags/v${version}`],
+        { encoding: 'utf8', timeout: 60_000 }).trim();
+      const recoveredSha = recoverySource(version, latest, published, changed, Boolean(tag));
+      if (recoveredSha) {
+        await smokePublishedPackage(version, recoveredSha);
+        if (await registryVersion('latest') !== version) throw new Error('npm latest changed during release recovery');
+        await appendFile(process.env.GITHUB_OUTPUT,
+          `release_sha=${recoveredSha}\nrelease_candidate=false\nverified_version=${version}\n`);
+        console.log(`${version}: confirmed published package and consumer at ${recoveredSha}; release metadata can resume`);
+        return;
+      }
+    }
     let releaseSha = sourceSha;
     if (decision.action === 'patch') {
       execFileSync('npm', ['version', 'patch', '--no-git-tag-version', '--ignore-scripts'], { stdio: 'pipe' });
