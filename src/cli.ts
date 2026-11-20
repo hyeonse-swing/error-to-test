@@ -13,7 +13,7 @@ import { readRunSummary, renderRunSummary, type RunSummary } from './run-summary
 import { readReadiness, renderReadiness, summarizeReadiness } from './readiness.ts';
 import { readCoverage, renderCoverage } from './coverage.ts';
 import { readEventTrace, renderEventTrace } from './trace.ts';
-import { refineBundle } from './refinement.ts';
+import { refineBundle, reselectBundle } from './refinement.ts';
 import { startReview } from './review-server.ts';
 import { writePreparedWorkspace } from './review-session.ts';
 import { readIssueReport } from './issue-report.ts';
@@ -34,6 +34,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test init-profile new-directory --profile existing.json --out extended.json
   error-to-test review BUNDLE --out NEW_REVIEW_DIRECTORY [--input FILE] [--profile ORIGINAL_PROFILE] [--draft SAVED_DRAFT] [--port 0]
   error-to-test refine new-directory --profile updated.json --out refined-directory [--reviewed]
+  error-to-test reselect new-directory --group GROUP_ID [--group OTHER_GROUP_ID] --profile updated.json --out selected-directory
   error-to-test issue new-directory --group GROUP_ID [--out issue.md]
   error-to-test link-run new-directory --report path/to/qa-report.json
   error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--require-pass | --fail-on STATUS ...]
@@ -58,6 +59,7 @@ Options:
   --target-fingerprint SHA256  Scope trace outcomes to this linked target fingerprint
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
   --profile FILE         Replacement profile for the bundle's previously selected groups (refine; required)
+  --profile FILE         Profile for newly selected saved groups (reselect; required)
   --baseline DIRECTORY   Select only signatures absent from this verified bundle, before --min-count and --top; retain all groups in analysis.json (analyze only)
   --project NAME         Metadata for a manual report
   --environment NAME    Metadata for a manual report
@@ -71,10 +73,11 @@ Options:
   --expected-source TEXT Expected-result source (--error only)
   --from ISO --to ISO    Filter observed timestamps; undated reports are excluded
   --min-count N          Select groups with at least N records after dedup/date filtering (1..10000)
-  --group GROUP_ID       Analyze: select exact groups before min-count/top (repeat up to 100 times); issue: export exactly one group
+  --group GROUP_ID       Analyze: select exact groups before min-count/top; reselect: previously excluded observed groups (repeat up to 100 times); issue: export one group
   --top N                Generate TCs for the first N eligible ranked groups (1..100; after --min-count)
   --out DIRECTORY        New analyze directory; existing files are never overwritten
   --out DIRECTORY        New refine directory outside the source bundle (required; review defaults to pending)
+  --out DIRECTORY        New reselect directory outside the source bundle (required; review is pending)
   --out FILE             New init-profile JSON file; existing files are never overwritten
   --out FILE             New issue Markdown file outside the source bundle; no remote issue is filed
   --out FILE             New results summary file; existing files are never overwritten
@@ -190,7 +193,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (positionals.length === 0) {
-    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, issue, verify, prepare-run, link-run, results, compare, readiness, coverage, or trace. See --help.');
+    if (Object.keys(values).length) throw new Error('A command is required. Use analyze, init-profile, refine, reselect, issue, verify, prepare-run, link-run, results, compare, readiness, coverage, or trace. See --help.');
     process.stdout.write(help);
     return;
   }
@@ -243,6 +246,24 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const files = await writeBundle(out, analysis, { reviewed: values.reviewed });
     const drafts = analysis.candidates.filter(candidate => candidate.state === 'draft').length;
     process.stdout.write(`${analysis.groups.length} error groups retained; ${analysis.candidates.length} refined TC candidates (${drafts} drafts, ${analysis.candidates.length - drafts} need context).\nReview ${resolve(out, 'report.md')}\n${files.length} artifacts written. Review acknowledgment: ${values.reviewed ? 'yes' : 'pending'}. Original input was not rechecked.\n`);
+    return;
+  }
+  if (command === 'reselect') {
+    if (positionals.length !== 2 || !positionals[1]?.trim() || !values.group?.length || !values.profile?.trim() || !values.out?.trim()) {
+      throw new Error('reselect requires one bundle directory, --group GROUP_ID, --profile FILE, and --out DIRECTORY.');
+    }
+    if (Object.keys(values).some(key => !['group', 'profile', 'out', 'help'].includes(key))) {
+      throw new Error('Unsupported option for reselect. Use only --group GROUP_ID, --profile FILE, and --out DIRECTORY.');
+    }
+    const bundle = resolve(positionals[1]);
+    const out = resolve(values.out);
+    if (insideBundle(await realpath(bundle), await canonicalOutput(out))) {
+      throw new Error('The reselected output must be outside the source bundle. Choose a new --out DIRECTORY path.');
+    }
+    const analysis = await reselectBundle(bundle, values.group, await readBoundedFile(resolve(values.profile), 1024 * 1024));
+    const files = await writeBundle(out, analysis);
+    const drafts = analysis.candidates.filter(candidate => candidate.state === 'draft').length;
+    process.stdout.write(`${analysis.groups.length} error groups retained; ${analysis.candidates.length} newly selected TC candidates (${drafts} drafts, ${analysis.candidates.length - drafts} need context).\nReview ${resolve(out, 'report.md')}\n${files.length} artifacts written. Review acknowledgment: pending. Original input was not rechecked.\n`);
     return;
   }
   if (command === 'init-profile') {
@@ -462,7 +483,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`Flow QA workspace: ${out}\nReviewed cases: ${readiness.counts.ready}. Suite SHA-256: ${readiness.suiteSha256}\nOriginal input: ${result.sourceChecked ? 'checked' : 'not supplied'}. No target selected or browser run.\nConnect your chosen target in this workspace. Run cases/error-to-test.json, then use link-run with the original analysis bundle.\n`);
     return;
   }
-  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, issue, verify, prepare-run, link-run, results, compare, readiness, coverage, or trace. See --help.');
+  if (command !== 'analyze' || positionals.length !== 1) throw new Error('Use analyze, init-profile, refine, reselect, issue, verify, prepare-run, link-run, results, compare, readiness, coverage, or trace. See --help.');
   if (values.report) throw new Error('--report applies to link-run only.');
   if (values['require-pass']) throw new Error('--require-pass applies to results only.');
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');

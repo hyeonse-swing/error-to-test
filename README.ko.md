@@ -250,6 +250,19 @@ error-to-test refine ./initial-analysis --profile ./review-profile.json --review
 
 API는 `await refineBundle(directory, profileJsonText)`입니다. JSON 문자열을 받아 새 `Analysis`를 반환하며 파일 저장·검토 승인·종료 코드 변경은 하지 않습니다. 저장하려면 별도 새 경로에 `writeBundle()`을 호출하세요.
 
+### 원본 로그 없이 관측된 다른 묶음 선택
+
+`reselect`는 처음 분석할 때 `--top`이나 `--min-count`에서 빠졌지만 저장된 분석에 남아 있는 오류 묶음으로 새 검토 번들을 만듭니다. 원본 `analysis.json`이나 `report.md`에서 묶음 ID를 읽고, 요구사항과 단언을 확인한 전체 프로필을 전달하세요.
+
+```sh
+error-to-test reselect ./initial-analysis --group group-0123456789abcdef --profile ./other-profile.json --out ./other-analysis
+error-to-test readiness ./other-analysis
+```
+
+지정한 묶음에 대해서만 저장된 순위 순서로 후보를 만들며, 관측된 모든 묶음과 입력 해시·수집 범위는 새 분석에도 남습니다. `analysis.reselection`과 보고서에는 검증된 원본 분석·suite·프로필 해시, 이전 선택과 새 선택을 기록합니다. 새 번들은 검토 대기 상태이며 기존 실행 결과를 복사하지 않습니다. 기대 결과와 미해결 질문을 다시 검토한 다음 실행을 준비하세요. 전달한 프로필의 실제 바이트를 해시에 반영하며 BOM 하나를 허용합니다. 원본 입력 바이트가 있으면 `verify --input`으로 별도 확인하세요.
+
+이 명령은 이전 후보에서 빠진 서로 다른 묶음 ID 1~100개와 원본 번들 바깥의 새 출력 경로를 받습니다. 관측되지 않은 ID나 묶음 전체 맥락이 없는 옛 번들은 원본 로그로 다시 분석해야 합니다. `--baseline` 또는 명시적 `--group`으로 만든 번들은 당시 제외 규칙을 저장된 순위만으로 되돌릴 수 없어 재선택을 거부합니다. 재선택한 번들에서 또 다른 묶음을 고를 때는 원래 순위를 기록한 분석 번들을 사용하세요. 재선택한 번들을 `refine`으로 정제한 경우에도 같습니다. 원래 분석 번들을 정제한 결과에서는 재선택할 수 있습니다. 기존 `refine`은 원래 선택된 묶음만 다시 생성합니다. API는 `reselectBundle(directory, groupIds, profileJsonText)`이며 저장할 때는 새 경로에 `writeBundle()`을 호출합니다.
+
 ```sh
 node bin/error-to-test.mjs verify .error-to-test/example --input examples/errors.json --profile examples/profile.json
 node bin/error-to-test.mjs analyze --input examples/errors.json --profile examples/profile.json --reviewed --out .error-to-test/reviewed

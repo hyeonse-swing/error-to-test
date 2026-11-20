@@ -318,6 +318,19 @@ await writeBundle('./refined', analysis); // Review remains pending by default.
 
 `refineBundle(directory, profileText)` accepts JSON text and returns a new `Analysis`. It does not write files, approve cases, or change process exit codes. Use a separate new output directory when writing the result.
 
+### Select another observed group without the original logs
+
+`reselect` creates a new bundle for explicitly named groups that were observed but excluded from the source bundle's candidates by `--top` or `--min-count`. Read their IDs in the source `analysis.json` or `report.md`, then provide a complete replacement profile with reviewed requirements and assertions:
+
+```sh
+error-to-test reselect ./initial-analysis --group group-0123456789abcdef --profile ./other-profile.json --out ./other-analysis
+error-to-test readiness ./other-analysis
+```
+
+Only the requested groups receive candidates, in their saved rank order. The original groups, input fingerprints and coverage stay in the new analysis. `analysis.reselection` records the verified source analysis, suite and profile hashes, previous selected group IDs and newly selected IDs. The report repeats this lineage. The new bundle has pending review and no linked runs. Recheck every expectation and unresolved question before preparing a run. The supplied profile is parsed and hashed from its exact bytes, including an optional leading BOM. The original input bytes are not rechecked; provide them to `verify --input` if they are available.
+
+This command accepts 1–100 distinct, previously excluded IDs and a new output directory outside the source bundle. Unknown IDs and old bundles without full saved group context require the original logs and a fresh analysis. A source created with `--baseline` or an explicit `--group` cannot be expanded from its saved analysis because its exclusion policy is outside ranking limits. To choose another group after a reselection, use the original ranked analysis bundle. This also applies if the reselected bundle was later refined. Refining the original ranked bundle still permits reselection. `refine` continues to regenerate only the source bundle's selected groups. The API is `reselectBundle(directory, groupIds, profileJsonText)`, followed by `writeBundle(newDirectory, analysis)` to save.
+
 ## Review and use Flow QA
 
 Generated files (Flow QA source is limited to 128 KB; suite JSON to 512 KiB):

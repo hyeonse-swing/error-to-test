@@ -7,7 +7,7 @@ export { writeBundle, verifyBundle, renderReport } from './artifacts.ts';
 export { readIssueReport } from './issue-report.ts';
 export { linkFlowQaReport } from './results.ts';
 export { createProfileTemplate, type ProfileTemplateOptions } from './profile-template.ts';
-export { refineBundle } from './refinement.ts';
+export { refineBundle, reselectBundle } from './refinement.ts';
 export { readRunSummary, renderRunSummary, type RunSummary, type ReadRunSummaryOptions, type LinkedRunStatus, type LinkedCaseStatus } from './run-summary.ts';
 export { readReadiness, renderReadiness, type ReadinessSummary } from './readiness.ts';
 export { readCoverage, renderCoverage, type CoverageSummary, type GroupCoverageStatus, type GroupCoverageReason } from './coverage.ts';

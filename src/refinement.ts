@@ -122,7 +122,7 @@ function group(value: unknown, label: string, requireContext: boolean): IssueGro
   return raw as unknown as IssueGroup;
 }
 
-function checkedAnalysis(value: unknown, provenance: Record<string, unknown>): { analysis: Analysis; selectedGroups: IssueGroup[] } {
+function checkedAnalysis(value: unknown, provenance: Record<string, unknown>, allowEmpty = false): { analysis: Analysis; selectedGroups: IssueGroup[] } {
   const raw = record(value, 'analysis');
   if (raw.schemaVersion !== 'error-to-test/analysis-1') invalid('schemaVersion');
   const source = record(raw.source, 'analysis.source');
@@ -162,7 +162,7 @@ function checkedAnalysis(value: unknown, provenance: Record<string, unknown>): {
     candidateIds.add(candidate.id);
     selectedIds.add(candidate.groupId);
   }
-  if (!selectedIds.size) throw new Error('Refinement requires at least one selected candidate group.');
+  if (!selectedIds.size && !allowEmpty) throw new Error('Refinement requires at least one selected candidate group.');
   const seenGroups = new Set<string>();
   const selectedGroups: IssueGroup[] = [];
   for (const [index, value] of raw.groups.entries()) {
@@ -180,8 +180,7 @@ function checkedAnalysis(value: unknown, provenance: Record<string, unknown>): {
   return { analysis: raw as unknown as Analysis, selectedGroups };
 }
 
-/** Rebuild candidates from a verified analysis snapshot without reading the original input or writing artifacts. */
-export async function refineBundle(directory: string, profile: string): Promise<Analysis> {
+function checkedProfile(profile: string) {
   if (typeof profile !== 'string') throw new Error('The profile must be JSON text.');
   if (Buffer.byteLength(profile, 'utf8') > 1024 * 1024) throw new Error('The profile must be 1 MiB or smaller.');
   let parsed: unknown;
@@ -192,9 +191,36 @@ export async function refineBundle(directory: string, profile: string): Promise<
     (rule.match.groupId !== undefined && redactText(rule.match.groupId) !== rule.match.groupId))) {
     throw new Error('The profile contains sensitive scenario IDs; remove them before refining.');
   }
+  return appProfile;
+}
+
+async function rebuildBundle(directory: string, profile: string, requestedGroupIds?: readonly string[]): Promise<Analysis> {
+  const appProfile = checkedProfile(profile);
+  if (requestedGroupIds !== undefined && (!Array.isArray(requestedGroupIds) || requestedGroupIds.length < 1 ||
+    requestedGroupIds.length > 100 || requestedGroupIds.some(id => typeof id !== 'string' || !groupId.test(id)) ||
+    new Set(requestedGroupIds).size !== requestedGroupIds.length)) {
+    throw new Error('Provide 1 to 100 distinct observed group IDs.');
+  }
   const verified = await readVerifiedBundle(directory);
-  const { analysis, selectedGroups } = checkedAnalysis(verified.analysis, verified.provenance);
-  const candidates = createCandidates(selectedGroups, appProfile);
+  if (requestedGroupIds !== undefined && (verified.analysis.selection !== undefined || verified.analysis.groupFilter !== undefined)) {
+    throw new Error('Saved baseline or explicit group selection cannot be expanded. Reanalyze the original input.');
+  }
+  if (requestedGroupIds !== undefined && verified.analysis.reselection !== undefined) {
+    throw new Error('This bundle already reselected observed groups. Use the original ranked analysis bundle to choose another group.');
+  }
+  const { analysis, selectedGroups } = checkedAnalysis(verified.analysis, verified.provenance, requestedGroupIds !== undefined);
+  let targetGroups = selectedGroups;
+  if (requestedGroupIds !== undefined) {
+    const previouslySelected = new Set(selectedGroups.map(item => item.id));
+    const requested = new Set(requestedGroupIds);
+    if (requestedGroupIds.some(id => previouslySelected.has(id))) {
+      throw new Error('Choose only observed groups excluded from the source candidates.');
+    }
+    targetGroups = analysis.groups.filter(item => requested.has(item.id));
+    if (targetGroups.length !== requested.size) throw new Error('A requested group ID was not observed in the source bundle.');
+    targetGroups.forEach((item, index) => group(item, `reselected.groups[${index}]`, true));
+  }
+  const candidates = createCandidates(targetGroups, appProfile);
   if (candidates.length > 100) throw new Error(`Flow QA supports at most 100 cases; received ${candidates.length}. Narrow the selected scenario rules.`);
   const sourceAnalysisSha256 = verified.provenance.analysisSha256;
   if (typeof sourceAnalysisSha256 !== 'string' || !sha256.test(sourceAnalysisSha256)) invalid('provenance.analysisSha256');
@@ -202,12 +228,36 @@ export async function refineBundle(directory: string, profile: string): Promise<
   if (sourceSuiteSha256 !== undefined && (typeof sourceSuiteSha256 !== 'string' || !sha256.test(sourceSuiteSha256))) invalid('provenance.suiteSha256');
   const sourceProfileSha256 = verified.provenance.profileSha256;
   if (sourceProfileSha256 !== undefined && (typeof sourceProfileSha256 !== 'string' || !sha256.test(sourceProfileSha256))) invalid('provenance.profileSha256');
+  const lineage = { sourceAnalysisSha256, ...(sourceSuiteSha256 === undefined ? {} : { sourceSuiteSha256 }),
+    ...(sourceProfileSha256 === undefined ? {} : { sourceProfileSha256 }) };
+  if (requestedGroupIds !== undefined) {
+    const { refinement: _previousRefinement, reselection: _previousReselection, ...retained } = analysis;
+    return {
+      ...retained,
+      source: { ...analysis.source, profileSha256: hash(profile) },
+      candidates,
+      warnings: [...analysis.warnings.filter(note => !note.startsWith('Refinement:') && !note.startsWith('Reselection:') &&
+        !note.startsWith('TC selection includes') && !note.startsWith('TC selection requires')),
+        'Reselection: Candidates were generated only for explicitly requested observed groups in saved rank order. Original input was not rechecked; all observed groups and source coverage remain. Review the new cases before execution.'],
+      reselection: { ...lineage, previouslySelectedGroupIds: selectedGroups.map(item => item.id),
+        selectedGroupIds: targetGroups.map(item => item.id) },
+    };
+  }
   return {
     ...analysis,
     source: { ...analysis.source, profileSha256: hash(profile) },
     candidates,
     warnings: [...analysis.warnings.filter(note => !note.startsWith('Refinement:')), refinementNote],
-    refinement: { sourceAnalysisSha256, ...(sourceSuiteSha256 === undefined ? {} : { sourceSuiteSha256 }),
-      ...(sourceProfileSha256 === undefined ? {} : { sourceProfileSha256 }), selectedGroupIds: selectedGroups.map(item => item.id) },
+    refinement: { ...lineage, selectedGroupIds: selectedGroups.map(item => item.id) },
   };
+}
+
+/** Regenerate the source's selected groups with a replacement profile. */
+export async function refineBundle(directory: string, profile: string): Promise<Analysis> {
+  return rebuildBundle(directory, profile);
+}
+
+/** Select previously excluded observed groups from a verified saved bundle. */
+export async function reselectBundle(directory: string, groupIds: readonly string[], profile: string): Promise<Analysis> {
+  return rebuildBundle(directory, profile, groupIds);
 }

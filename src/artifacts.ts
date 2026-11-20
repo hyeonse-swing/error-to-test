@@ -39,6 +39,15 @@ export function renderReport(analysis: Analysis): string {
     'TCs were regenerated from the verified saved groups and a replacement profile. Original input was not rechecked; selection and source coverage were not expanded.',
     'The new bundle has its own review acknowledgement and suite. Linked run results were not transferred.',
   ].join('\n')), '');
+  if (analysis.reselection) lines.push('## Saved group reselection', '', literal([
+    `Source analysis SHA-256: ${analysis.reselection.sourceAnalysisSha256}`,
+    ...(analysis.reselection.sourceSuiteSha256 ? [`Source suite SHA-256: ${analysis.reselection.sourceSuiteSha256}`] : []),
+    ...(analysis.reselection.sourceProfileSha256 ? [`Source profile SHA-256: ${analysis.reselection.sourceProfileSha256}`] : []),
+    `Previously selected group IDs: ${analysis.reselection.previouslySelectedGroupIds.join(', ')}`,
+    `Newly selected group IDs: ${analysis.reselection.selectedGroupIds.join(', ')}`,
+    'Candidates were generated from the saved observed groups. Original input was not rechecked; all observed groups and source coverage remain.',
+    'The new bundle has its own pending review and suite. Linked run results were not transferred.',
+  ].join('\n')), '');
   if (analysis.groupFilter) lines.push('## Explicit group selection', '', literal([
     `Requested group IDs: ${analysis.groupFilter.groupIds.join(', ')}`,
     'TCs are selected from these exact current groups, intersected with any baseline selection, before min-count and top. Input ID order does not change ranking.',
