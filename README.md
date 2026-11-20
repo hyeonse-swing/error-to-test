@@ -4,7 +4,7 @@ Turn captured browser errors **or a pasted error report** into grouped issues, r
 
 [![npm](https://img.shields.io/npm/v/@ihyeon/error-to-test)](https://www.npmjs.com/package/@ihyeon/error-to-test) [![CI](https://github.com/hyeonse-swing/error-to-test/actions/workflows/ci.yml/badge.svg)](https://github.com/hyeonse-swing/error-to-test/actions/workflows/ci.yml)
 
-[한국어](README.ko.md)
+[한국어](https://github.com/hyeonse-swing/error-to-test/blob/main/README.ko.md)
 
 ## AI assistant skill
 

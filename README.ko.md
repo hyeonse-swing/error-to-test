@@ -2,7 +2,7 @@
 
 SDK에서 내보낸 브라우저 오류 로그 또는 **직접 입력한 오류 메시지·스택**을 분석해 반복 오류 묶음과 회귀 TC 초안으로 만듭니다. 모델이나 수집 서버 없이 로컬에서 사용하며, Flow QA 형식으로 내보냅니다.
 
-[English](README.md)
+[English](https://github.com/hyeonse-swing/error-to-test/blob/main/README.md)
 
 ## AI 도우미용 스킬
 
