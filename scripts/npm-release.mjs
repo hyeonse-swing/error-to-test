@@ -86,11 +86,50 @@ export function canResumePublishedSource(metadata, sourceSha) {
     metadata.gitHead.toLowerCase() === sourceSha.toLowerCase();
 }
 
-export function recoverySource(version, latest, metadata, changedPaths, tagPresent) {
+export function recoverySource(version, latest, metadata, changedPaths, tagSha, release) {
   if (latest !== version || metadata?.name !== NAME || metadata?.version !== version ||
     !validCommitSha(metadata.gitHead) ||
-    changedRuntimeFiles(changedPaths).length || tagPresent) return null;
-  return metadata.gitHead.toLowerCase();
+    changedRuntimeFiles(changedPaths).length) return null;
+  const sourceSha = metadata.gitHead.toLowerCase();
+  if (tagSha !== null && tagSha !== sourceSha) throw new Error(`v${version} tag points to a different commit`);
+  if (release !== null) {
+    if (tagSha === null || release.tag_name !== `v${version}` || release.draft !== false ||
+      release.prerelease !== false ||
+      (SHA.test(release.target_commitish ?? '') && release.target_commitish.toLowerCase() !== sourceSha)) {
+      throw new Error(`v${version} GitHub release does not match the published source`);
+    }
+    return null;
+  }
+  return sourceSha;
+}
+
+export function remoteTagSha(output, version) {
+  const tagRef = `refs/tags/v${version}`;
+  if (!output.trim()) return null;
+  const refs = new Map();
+  for (const line of output.trim().split(/\r?\n/)) {
+    const match = /^([0-9a-f]{40})\t(.+)$/.exec(line);
+    if (!match || ![tagRef, `${tagRef}^{}`].includes(match[2]) || refs.has(match[2])) {
+      throw new Error(`Invalid remote v${version} tag reference`);
+    }
+    refs.set(match[2], match[1]);
+  }
+  if (!refs.has(tagRef)) throw new Error(`Missing remote v${version} tag reference`);
+  return refs.get(`${tagRef}^{}`) ?? refs.get(tagRef);
+}
+
+export async function githubReleaseMetadata(version, request = fetch) {
+  const response = await request(`https://api.github.com/repos/hyeonse-swing/error-to-test/releases/tags/v${version}`, {
+    headers: { accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`GitHub release v${version}: HTTP ${response.status}`);
+  const release = await response.json();
+  if (!release || typeof release !== 'object' || Array.isArray(release)) {
+    throw new Error(`GitHub release v${version}: invalid metadata`);
+  }
+  return release;
 }
 
 export function confirmPublishedSource(metadata, githubSha) {
@@ -264,9 +303,11 @@ async function main() {
     }
     const decision = prepareDecision(version, latest, changed);
     if (decision.action === 'skip' && published) {
-      const tag = execFileSync('git', ['ls-remote', '--tags', 'origin', `refs/tags/v${version}`],
-        { encoding: 'utf8', timeout: 60_000 }).trim();
-      const recoveredSha = recoverySource(version, latest, published, changed, Boolean(tag));
+      const tag = remoteTagSha(execFileSync('git', ['ls-remote', '--tags', 'origin',
+        `refs/tags/v${version}`, `refs/tags/v${version}^{}`],
+      { encoding: 'utf8', timeout: 60_000 }), version);
+      const release = await githubReleaseMetadata(version);
+      const recoveredSha = recoverySource(version, latest, published, changed, tag, release);
       if (recoveredSha) {
         await smokePublishedPackage(version, recoveredSha);
         if (await registryVersion('latest') !== version) throw new Error('npm latest changed during release recovery');

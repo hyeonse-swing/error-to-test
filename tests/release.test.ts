@@ -57,16 +57,45 @@ test('retry accepts only the direct bot patch of the original push', () => {
   assert.equal(npmRelease.canResumePublishedSource({}, sha), false);
 });
 
-test('recovery selects only the untagged published source with no later runtime changes', () => {
+test('recovery selects a missing release only for the exact published source and tag', () => {
   const published = { ...manifest('0.5.3'), gitHead: sha.toUpperCase() };
   assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published,
-    ['scripts/npm-release.mjs', '.github/workflows/ci.yml', 'tests/release.test.ts'], false), sha);
-  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.4', published, [], false), null);
-  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published, ['src/index.ts'], false), null);
-  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published, [], true), null);
-  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', {}, [], false), null);
-  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', { ...published, name: '@other/error-to-test' }, [], false), null);
-  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', { ...published, version: '0.5.2' }, [], false), null);
+    ['scripts/npm-release.mjs', '.github/workflows/ci.yml', 'tests/release.test.ts'], null, null), sha);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published, [], sha, null), sha);
+  const release = { tag_name: 'v0.5.3', draft: false, prerelease: false, target_commitish: sha };
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published, [], sha, release), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.4', published, [], null, null), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', published, ['src/index.ts'], null, null), null);
+  assert.throws(() => npmRelease.recoverySource('0.5.3', '0.5.3', published, [], otherSha, null), /different commit/);
+  assert.throws(() => npmRelease.recoverySource('0.5.3', '0.5.3', published, [], null, release), /does not match/);
+  assert.throws(() => npmRelease.recoverySource('0.5.3', '0.5.3', published, [], sha,
+    { ...release, target_commitish: otherSha }), /does not match/);
+  assert.throws(() => npmRelease.recoverySource('0.5.3', '0.5.3', published, [], sha,
+    { ...release, draft: true }), /does not match/);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', {}, [], null, null), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', { ...published, name: '@other/error-to-test' }, [], null, null), null);
+  assert.equal(npmRelease.recoverySource('0.5.3', '0.5.3', { ...published, version: '0.5.2' }, [], null, null), null);
+});
+
+test('remote tag lookup peels annotated tags and rejects malformed references', () => {
+  assert.equal(npmRelease.remoteTagSha('', '0.5.3'), null);
+  assert.equal(npmRelease.remoteTagSha(`${sha}\trefs/tags/v0.5.3\n`, '0.5.3'), sha);
+  assert.equal(npmRelease.remoteTagSha(`${otherSha}\trefs/tags/v0.5.3\n${sha}\trefs/tags/v0.5.3^{}\n`, '0.5.3'), sha);
+  assert.throws(() => npmRelease.remoteTagSha(`${sha}\trefs/tags/v0.5.2\n`, '0.5.3'), /Invalid remote/);
+  assert.throws(() => npmRelease.remoteTagSha(`${sha}\trefs/tags/v0.5.3^{}\n`, '0.5.3'), /Missing remote/);
+});
+
+test('GitHub release lookup treats only 404 as missing', async () => {
+  const release = { tag_name: 'v0.5.3', draft: false, prerelease: false };
+  const respond = (status: number, body: unknown = release) => async () => ({
+    ok: status === 200, status, json: async () => body,
+  });
+  assert.equal(await npmRelease.githubReleaseMetadata('0.5.3', respond(404)), null);
+  assert.deepEqual(await npmRelease.githubReleaseMetadata('0.5.3', respond(200)), release);
+  await assert.rejects(npmRelease.githubReleaseMetadata('0.5.3', respond(403)), /HTTP 403/);
+  await assert.rejects(npmRelease.githubReleaseMetadata('0.5.3', respond(500)), /HTTP 500/);
+  await assert.rejects(npmRelease.githubReleaseMetadata('0.5.3', respond(200, [])), /invalid metadata/);
+  await assert.rejects(npmRelease.githubReleaseMetadata('0.5.3', async () => { throw new Error('network down'); }), /network down/);
 });
 
 test('downloaded tarball must match registry SHA-512', async () => {
