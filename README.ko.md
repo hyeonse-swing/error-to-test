@@ -294,11 +294,12 @@ SDK가 반환한 오류 ID에서 그룹·TC 후보·검토 차단 사유·최근
 
 ```sh
 error-to-test trace ./review-analysis --event-id "YOUR_EVENT_ID"
+error-to-test trace ./review-analysis --event-id "YOUR_EVENT_ID" --project "YOUR_PROJECT"
 error-to-test trace ./review-analysis --event-id "YOUR_EVENT_ID" --format json
 error-to-test trace ./review-analysis --event-id "YOUR_EVENT_ID" --target-fingerprint "$TARGET_FINGERPRINT"
 ```
 
-`error-to-test/trace-1`은 여러 프로젝트에서 같은 ID를 썼다면 일치하는 그룹을 모두 반환합니다. 미선택·차단·검토 준비와 최근 실행에서 빠진 TC의 `not-run`을 구분하고, 실행 결과는 `results`와 동일한 대상 범위·최근 실행 규칙을 따릅니다. 오류 메시지나 스택 대신 ID·프로젝트·그룹·TC·상태와 입력 해시, 부분 수집 여부, 보존 범위 미확인 경고를 표시합니다. ID가 저장된 분석 입력에 없으면 `found: false`와 종료 코드 2를 반환합니다. 서비스 전체에서 발생하지 않았다는 뜻은 아닙니다. 잘못된 번들·옵션은 코드 1입니다. 원본 바이트는 필요 시 `verify --input`으로 확인하세요. API는 `readEventTrace(directory, eventId, { targetFingerprint })`와 `renderEventTrace(trace)`입니다.
+`error-to-test/trace-1`은 여러 프로젝트에서 같은 ID를 썼다면 일치하는 그룹을 모두 반환합니다. `--project`로 프로젝트 이름을 정확히 지정하면 그 프로젝트만 조회하며, ID가 다른 프로젝트에만 있으면 `found: false`와 종료 코드 2를 반환합니다. 미선택·차단·검토 준비와 최근 실행에서 빠진 TC의 `not-run`을 구분하고, 실행 결과는 `results`와 동일한 대상 범위·최근 실행 규칙을 따릅니다. 오류 메시지나 스택 대신 ID·프로젝트·그룹·TC·상태와 입력 해시, 부분 수집 여부, 보존 범위 미확인 경고를 표시합니다. ID가 저장된 분석 입력에 없으면 `found: false`와 종료 코드 2를 반환합니다. 서비스 전체에서 발생하지 않았다는 뜻은 아닙니다. 잘못된 번들·옵션은 코드 1입니다. 원본 바이트는 필요 시 `verify --input`으로 확인하세요. API는 `readEventTrace(directory, eventId, { project, targetFingerprint })`와 `renderEventTrace(trace)`입니다.
 
 Flow QA 설치와 실행 대상 설정은 별도로 필요합니다. 위 `flows/`·`cases/` 구조를 기존 검토 화면에서 읽을 수 있습니다. 분석 명령은 브라우저를 실행하거나 외부 모델에 요청하지 않습니다. TC 통과만으로 원래 오류를 수정 완료 처리하지 않습니다.
 

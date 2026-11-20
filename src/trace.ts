@@ -19,6 +19,7 @@ type TraceCase = {
 export interface EventTrace {
   schemaVersion: 'error-to-test/trace-1';
   eventId: string;
+  project?: string;
   found: boolean;
   source: {
     inputSha256: string;
@@ -65,14 +66,16 @@ function count(value: unknown, label: string): number {
 }
 
 /** Find an event in one verified saved analysis and its latest linked run. */
-export async function readEventTrace(directory: string, eventId: string, options: ReadRunSummaryOptions = {}): Promise<EventTrace> {
+export async function readEventTrace(directory: string, eventId: string, options: ReadRunSummaryOptions & { project?: string } = {}): Promise<EventTrace> {
   const requested = text(eventId, 'eventId');
   if (redactText(requested) !== requested) throw new Error('eventId contains data that cannot be safely displayed.');
+  const project = options.project === undefined ? undefined : text(options.project, 'project');
+  if (project !== undefined && redactText(project) !== project) throw new Error('project contains data that cannot be safely displayed.');
 
   const snapshot = await readVerifiedBundle(directory);
   const readiness = summarizeReadiness(snapshot);
   const coverage = summarizeCoverage(snapshot, readiness);
-  const runs = await summarizeRunSummary(directory, snapshot, options);
+  const runs = await summarizeRunSummary(directory, snapshot, { targetFingerprint: options.targetFingerprint });
 
   const sourceCoverage = record(snapshot.analysis.coverage, 'analysis.coverage');
   const kind = sourceCoverage.kind;
@@ -95,7 +98,7 @@ export async function readEventTrace(directory: string, eventId: string, options
     if (!Array.isArray(ids) || ids.length !== group.count || ids.some(id => typeof id !== 'string' || !id.trim() || id.length > 8192)) {
       throw new Error('STALE_BUNDLE: Observed event IDs are invalid.');
     }
-    if (!ids.includes(requested)) return;
+    if (!ids.includes(requested) || (project !== undefined && group.project !== project)) return;
     const covered = coveredGroups.get(groupId);
     const runGroup = runGroups.get(groupId);
     if (!covered || !runGroup) throw new Error('STALE_BUNDLE: The event group is missing from coverage or results.');
@@ -122,13 +125,15 @@ export async function readEventTrace(directory: string, eventId: string, options
 
   const warnings = [...new Set([
     ...coverage.warnings, ...runs.warnings,
-    ...(matches.length ? [] : ['This event ID was not found in the saved analysis input. This does not establish that it never occurred or was never collected.']),
+    ...(matches.length ? [] : [project === undefined
+      ? 'This event ID was not found in the saved analysis input. This does not establish that it never occurred or was never collected.'
+      : 'This event ID was not found for the selected project in the saved analysis input. This does not establish that it never occurred or was never collected.']),
     ...(sourceCoverage.partial ? ['The source export was marked partial; other collected events may be outside this saved input.'] : []),
     ...(requested.includes('[redacted') ? ['The saved event ID contains redacted data; multiple original IDs may share this displayed value.'] : []),
     ...(matches.length > 1 ? ['The same event ID appears in multiple observed groups; use project and group ID to distinguish them.'] : []),
   ])];
   return {
-    schemaVersion: 'error-to-test/trace-1', eventId: requested, found: matches.length > 0,
+    schemaVersion: 'error-to-test/trace-1', eventId: requested, ...(project === undefined ? {} : { project }), found: matches.length > 0,
     source: { inputSha256: coverage.inputSha256, analysisSha256: coverage.analysisSha256,
       ...(coverage.suiteSha256 === undefined ? {} : { suiteSha256: coverage.suiteSha256 }),
       kind, frequency: coverage.frequency, partial: sourceCoverage.partial, retention: 'unknown' },
@@ -149,6 +154,7 @@ export function renderEventTrace(trace: EventTrace): string {
     throw new Error('Invalid trace run status.');
   }
   const lines = ['# Event trace', '', 'Event ID:', '', literal(text(trace.eventId, 'trace.eventId')),
+    ...(trace.project === undefined ? [] : ['Project filter:', '', literal(text(trace.project, 'trace.project'))]),
     `Found in saved input: ${trace.found ? 'yes' : 'no'}`,
     `Input SHA-256: ${checked(trace.source.inputSha256, shaPattern, 'trace.source.inputSha256')}`,
     `Analysis SHA-256: ${checked(trace.source.analysisSha256, shaPattern, 'trace.source.analysisSha256')}`,

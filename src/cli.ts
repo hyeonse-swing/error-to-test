@@ -39,7 +39,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--require-pass | --fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
   error-to-test coverage new-directory [--format text|json]
-  error-to-test trace new-directory --event-id ID [--format text|json] [--target-fingerprint SHA256]
+  error-to-test trace new-directory --event-id ID [--project NAME] [--format text|json] [--target-fingerprint SHA256]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
 Options:
@@ -54,6 +54,7 @@ Options:
   --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
   --format text|json      Observed group coverage format (default: text Markdown; read-only, no gate)
   --event-id ID           Trace an SDK event ID within one saved analysis (exit 2 when absent)
+  --project NAME          Scope trace matches to one exact project name
   --target-fingerprint SHA256  Scope trace outcomes to this linked target fingerprint
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
   --profile FILE         Replacement profile for the bundle's previously selected groups (refine; required)
@@ -372,12 +373,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     if (positionals.length !== 2 || !positionals[1]?.trim() || !values['event-id']?.trim()) {
       throw new Error('trace requires one bundle directory and --event-id ID.');
     }
-    if (Object.keys(values).some(key => !['event-id', 'format', 'target-fingerprint', 'help'].includes(key))) {
-      throw new Error('Unsupported option for trace. Use only --event-id ID, --format text|json, and --target-fingerprint SHA256.');
+    if (Object.keys(values).some(key => !['event-id', 'project', 'format', 'target-fingerprint', 'help'].includes(key))) {
+      throw new Error('Unsupported option for trace. Use only --event-id ID, --project NAME, --format text|json, and --target-fingerprint SHA256.');
     }
     const format = values.format ?? 'text';
     if (format !== 'text' && format !== 'json') throw new Error('trace --format must be text or json.');
-    const trace = await readEventTrace(resolve(positionals[1]), values['event-id'], { targetFingerprint: values['target-fingerprint'] });
+    const trace = await readEventTrace(resolve(positionals[1]), values['event-id'], {
+      project: values.project, targetFingerprint: values['target-fingerprint'],
+    });
     const content = format === 'json' ? jsonText(trace) : renderEventTrace(trace);
     if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The event trace exceeds 64 MiB. Narrow the bundle before requesting output.');
     await writeGateOutput(content);

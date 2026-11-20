@@ -158,6 +158,10 @@ function editRule(rule) {
   append(panel, heading('Review answers'), paragraph(`Rule ${rule.id}`, 'mono muted'));
   const matched = session.rules.find(item => item.id === rule.id)?.groupIds ?? [];
   append(panel, paragraph(`Applies to ${matched.length} observed group${matched.length === 1 ? '' : 's'}.`, 'muted'), list(matched, 'No observed group matches this rule.'));
+  const sourceCandidates = session.candidates.filter(candidate => matched.includes(candidate.groupId)
+    && (candidate.ruleId === rule.id || !candidate.ruleId));
+  append(panel, paragraph(`${sourceCandidates.length} source candidate${sourceCandidates.length === 1 ? '' : 's'} in affected selected groups. Preview to see regenerated candidates.`, 'muted'),
+    list(sourceCandidates.map(candidate => `${candidate.groupId} · ${candidate.id}`), 'No selected candidate in these groups.'));
   const match = element('details');
   append(match, element('summary', '', 'Rule scope'), element('pre', 'code-block', JSON.stringify(rule.match, null, 2)));
   panel.append(match);

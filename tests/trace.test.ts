@@ -56,6 +56,19 @@ test('one SDK ID traces every project, selected TC, latest target outcome, and p
     assert.equal(before.found, true);
     assert.equal(before.source.partial, true);
     assert.deepEqual(before.matches.map(match => match.project), ['alpha', 'beta']);
+    const alphaOnly = await readEventTrace(directory, 'shared', { project: 'alpha' });
+    assert.equal(alphaOnly.project, 'alpha');
+    assert.deepEqual(alphaOnly.matches.map(match => match.project), ['alpha']);
+    assert.equal(alphaOnly.matches[0]?.cases[0]?.state, 'draft');
+    assert.match(renderEventTrace(alphaOnly), /Project filter:\n/);
+    const betaOnly = run(['trace', directory, '--event-id', 'shared', '--project', 'beta', '--format', 'json']);
+    assert.equal(betaOnly.status, 0, betaOnly.stderr);
+    assert.deepEqual(JSON.parse(betaOnly.stdout).matches.map((match: { project: string }) => match.project), ['beta']);
+    const wrongProject = run(['trace', directory, '--event-id', 'shared', '--project', 'gamma', '--format', 'json']);
+    assert.equal(wrongProject.status, 2, wrongProject.stderr);
+    assert.equal(JSON.parse(wrongProject.stdout).found, false);
+    assert.deepEqual(JSON.parse(wrongProject.stdout).matches, []);
+    assert.match(JSON.parse(wrongProject.stdout).warnings.join(' '), /selected project/);
     assert.equal(before.matches[0]?.status, 'review-ready');
     assert.equal(before.matches[0]?.cases[0]?.state, 'draft');
     assert.equal(before.matches[0]?.cases[0]?.status, 'not-run');
@@ -114,6 +127,7 @@ test('trace rejects invalid options, redacted IDs, and a stale bundle', async ()
       assert.equal(result.stdout, '');
     }
     await assert.rejects(readEventTrace(directory, 'token=private-secret'), /cannot be safely displayed/);
+    await assert.rejects(readEventTrace(directory, 'shared', { project: 'token=private-secret' }), /cannot be safely displayed/);
     await assert.rejects(readEventTrace(directory, 'shared', { targetFingerprint: 'f'.repeat(64) }), /No linked runs match/);
     await writeFile(join(directory, 'analysis.json'), '{}\n');
     await assert.rejects(readEventTrace(directory, 'shared'), /STALE_BUNDLE/);
