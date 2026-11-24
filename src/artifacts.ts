@@ -5,6 +5,7 @@ import { exportFlowQa } from './exports/flow-qa.ts';
 import { hash, record, text } from './validation.ts';
 import { redactText } from './redact.ts';
 import { inputSource, validateInputSource } from './input-source.ts';
+import { reselectionChoices } from './reselection-choices.ts';
 import type { Analysis } from './types.ts';
 
 export function jsonText(value: unknown): string { return `${JSON.stringify(value, null, 2)}\n`; }
@@ -62,6 +63,21 @@ export function renderReport(analysis: Analysis): string {
     `Groups excluded as already observed: ${analysis.selection.excludedGroupCount}`,
     'All current groups remain below. Absence from this baseline does not establish when an error was introduced.',
   ].join('\n')), '');
+  const choices = reselectionChoices(analysis);
+  if (choices.restriction === 'selection') {
+    lines.push('## Saved group reselection options', '',
+      'This bundle uses baseline or explicit group selection. Reanalyze the original input to change the TC group scope.', '');
+  } else if (choices.restriction === 'reselection') {
+    lines.push('## Saved group reselection options', '',
+      'Use the original ranked analysis bundle to select another observed group.', '');
+  } else if (choices.available.length || choices.missingContext.length) {
+    lines.push('## Saved group reselection options', '',
+      `Observed groups available to reselect: ${choices.available.map(group => group.id).join(', ') || 'none'}`, '');
+    if (choices.missingContext.length) {
+      lines.push(`Older groups requiring reanalysis of the original input: ${choices.missingContext.map(group => group.id).join(', ')}`, '');
+    }
+    lines.push('Use reselect with an available group ID, a confirmed profile, and a new output directory. Review the new pending bundle before execution.', '');
+  }
   if (analysis.warnings.length) lines.push('## Coverage and selection notes', '', literal(analysis.warnings.join('\n')), '');
   if (!analysis.groups.length) lines.push('No matching errors were found. No suite was generated.', '');
   for (const group of analysis.groups) {

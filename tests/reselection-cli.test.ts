@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { analyzeErrors, analyzeWithBaseline, reselectBundle, writeBundle } from '../src/index.ts';
 import { readVerifiedBundle } from '../src/artifacts.ts';
+import { hash } from '../src/validation.ts';
 
 const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
 const run = (args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15_000 });
@@ -36,6 +37,9 @@ test('reselects only a saved top-excluded group after original logs are removed'
     const skipped = sourceAnalysis.groups.find(group => group.id !== selectedId)!;
     const source = join(root, 'source');
     await writeBundle(source, sourceAnalysis, { reviewed: true });
+    const sourceReport = await readFile(join(source, 'report.md'), 'utf8');
+    assert.match(sourceReport, new RegExp(`Observed groups available to reselect: ${skipped.id}`));
+    assert.ok(!sourceReport.includes(`Observed groups available to reselect: ${selectedId}`));
     await mkdir(join(source, 'results'));
     await writeFile(join(source, 'results', 'existing-note.txt'), 'old linked results stay with the source');
     const oldAnalysis = await readFile(join(source, 'analysis.json'), 'utf8');
@@ -71,9 +75,22 @@ test('reselects only a saved top-excluded group after original logs are removed'
     assert.equal(run(['refine', source, '--profile', profileFile, '--out', refinedFromOriginal]).status, 0);
     const fromRefined = await reselectBundle(refinedFromOriginal, [skipped.id], profileText);
     assert.deepEqual(fromRefined.candidates.map(candidate => candidate.groupId), [skipped.id]);
+    const legacySource = join(root, 'legacy-report');
+    await writeBundle(legacySource, sourceAnalysis);
+    const currentReport = await readFile(join(legacySource, 'report.md'), 'utf8');
+    const legacyReport = currentReport.replace(/## Saved group reselection options\n\n[\s\S]*?\n\n(?=## Coverage and selection notes|## group-)/, '');
+    assert.notEqual(legacyReport, currentReport);
+    const legacyProvenance = JSON.parse(await readFile(join(legacySource, 'provenance.json'), 'utf8'));
+    legacyProvenance.reportSha256 = hash(legacyReport);
+    await writeFile(join(legacySource, 'report.md'), legacyReport);
+    await writeFile(join(legacySource, 'provenance.json'), `${JSON.stringify(legacyProvenance, null, 2)}\n`);
+    await readVerifiedBundle(legacySource);
+    const fromLegacyReport = await reselectBundle(legacySource, [skipped.id], profileText);
+    assert.deepEqual(fromLegacyReport.candidates.map(candidate => candidate.groupId), [skipped.id]);
     assert.equal(run(['readiness', out, '--format', 'json']).status, 2);
     assert.equal(run(['verify', out, '--profile', profileFile]).status, 0);
     assert.match(await readFile(join(out, 'report.md'), 'utf8'), /Saved group reselection/);
+    assert.match(await readFile(join(out, 'report.md'), 'utf8'), /Use the original ranked analysis bundle/);
     await assert.rejects(stat(join(out, 'results')), { code: 'ENOENT' });
     assert.equal(await readFile(join(source, 'analysis.json'), 'utf8'), oldAnalysis);
     assert.equal(await readFile(join(source, 'provenance.json'), 'utf8'), oldProvenance);
@@ -89,6 +106,7 @@ test('reselects a min-count-excluded group in saved rank order and keeps full co
     const rare = sourceAnalysis.groups.find(group => group.message === 'Rare')!;
     const source = join(root, 'source');
     await writeBundle(source, sourceAnalysis);
+    assert.match(await readFile(join(source, 'report.md'), 'utf8'), new RegExp(`Observed groups available to reselect: .*${rare.id}`));
     const selected = await reselectBundle(source, [rare.id], profile(rare.id));
     assert.deepEqual(selected.candidates.map(candidate => candidate.groupId), [rare.id]);
     assert.ok(selected.candidates[0]!.questions.includes('Confirm setup before running.'));
@@ -124,6 +142,7 @@ test('rejects baseline, explicit filters, missing context and unobserved or alre
 
     const filtered = join(root, 'filtered');
     await writeBundle(filtered, analyzeErrors(input, { groupIds: [chosen] }));
+    assert.match(await readFile(join(filtered, 'report.md'), 'utf8'), /Reanalyze the original input to change the TC group scope/);
     await assert.rejects(reselectBundle(filtered, [rare], profile(rare)), /baseline or explicit group selection/);
 
     const base = join(root, 'base');
@@ -139,6 +158,7 @@ test('rejects baseline, explicit filters, missing context and unobserved or alre
     delete old.groups.find(group => group.id === rare)!.context;
     const oldBundle = join(root, 'old');
     await writeBundle(oldBundle, old);
+    assert.match(await readFile(join(oldBundle, 'report.md'), 'utf8'), new RegExp(`Older groups requiring reanalysis of the original input: ${rare}`));
     await assert.rejects(reselectBundle(oldBundle, [rare], profile(rare)), /Reanalyze the original input/);
 
     const stale = join(root, 'stale');

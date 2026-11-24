@@ -252,7 +252,7 @@ API는 `await refineBundle(directory, profileJsonText)`입니다. JSON 문자열
 
 ### 원본 로그 없이 관측된 다른 묶음 선택
 
-`reselect`는 처음 분석할 때 `--top`이나 `--min-count`에서 빠졌지만 저장된 분석에 남아 있는 오류 묶음으로 새 검토 번들을 만듭니다. 원본 `analysis.json`이나 `report.md`에서 묶음 ID를 읽고, 요구사항과 단언을 확인한 전체 프로필을 전달하세요.
+`reselect`는 처음 분석할 때 `--top`이나 `--min-count`에서 빠졌지만 저장된 분석에 남아 있는 오류 묶음으로 새 검토 번들을 만듭니다. 새로 생성한 `report.md`의 **Saved group reselection options**에서 재선택할 수 있는 묶음 ID와 재분석이 필요한 옛 묶음을 확인하고, 요구사항과 단언을 확인한 전체 프로필을 전달하세요.
 
 ```sh
 error-to-test reselect ./initial-analysis --group group-0123456789abcdef --profile ./other-profile.json --out ./other-analysis

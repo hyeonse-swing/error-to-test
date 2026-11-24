@@ -320,7 +320,7 @@ await writeBundle('./refined', analysis); // Review remains pending by default.
 
 ### Select another observed group without the original logs
 
-`reselect` creates a new bundle for explicitly named groups that were observed but excluded from the source bundle's candidates by `--top` or `--min-count`. Read their IDs in the source `analysis.json` or `report.md`, then provide a complete replacement profile with reviewed requirements and assertions:
+`reselect` creates a new bundle for explicitly named groups that were observed but excluded from the source bundle's candidates by `--top` or `--min-count`. In a newly generated `report.md`, the **Saved group reselection options** section lists available group IDs and identifies old groups that need reanalysis. Provide a complete replacement profile with reviewed requirements and assertions:
 
 ```sh
 error-to-test reselect ./initial-analysis --group group-0123456789abcdef --profile ./other-profile.json --out ./other-analysis

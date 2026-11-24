@@ -2,6 +2,7 @@ import { readVerifiedBundle } from './artifacts.ts';
 import { createCandidates, parseProfile } from './candidates.ts';
 import { validateInputSource } from './input-source.ts';
 import { redactText } from './redact.ts';
+import { reselectionChoices } from './reselection-choices.ts';
 import type { Analysis, EventType, IssueGroup, Runtime } from './types.ts';
 import { hash, parseWebSteps, record } from './validation.ts';
 
@@ -202,21 +203,27 @@ async function rebuildBundle(directory: string, profile: string, requestedGroupI
     throw new Error('Provide 1 to 100 distinct observed group IDs.');
   }
   const verified = await readVerifiedBundle(directory);
-  if (requestedGroupIds !== undefined && (verified.analysis.selection !== undefined || verified.analysis.groupFilter !== undefined)) {
+  const { analysis, selectedGroups } = checkedAnalysis(verified.analysis, verified.provenance, requestedGroupIds !== undefined);
+  const choices = requestedGroupIds === undefined ? undefined : reselectionChoices(analysis);
+  if (choices?.restriction === 'selection') {
     throw new Error('Saved baseline or explicit group selection cannot be expanded. Reanalyze the original input.');
   }
-  if (requestedGroupIds !== undefined && verified.analysis.reselection !== undefined) {
+  if (choices?.restriction === 'reselection') {
     throw new Error('This bundle already reselected observed groups. Use the original ranked analysis bundle to choose another group.');
   }
-  const { analysis, selectedGroups } = checkedAnalysis(verified.analysis, verified.provenance, requestedGroupIds !== undefined);
   let targetGroups = selectedGroups;
   if (requestedGroupIds !== undefined) {
     const previouslySelected = new Set(selectedGroups.map(item => item.id));
     const requested = new Set(requestedGroupIds);
+    const available = new Set(choices!.available.map(item => item.id));
+    const missingContext = new Set(choices!.missingContext.map(item => item.id));
     if (requestedGroupIds.some(id => previouslySelected.has(id))) {
       throw new Error('Choose only observed groups excluded from the source candidates.');
     }
-    targetGroups = analysis.groups.filter(item => requested.has(item.id));
+    if (requestedGroupIds.some(id => missingContext.has(id))) {
+      throw new Error('Selected group lacks full source context. Reanalyze the original input before refining.');
+    }
+    targetGroups = analysis.groups.filter(item => requested.has(item.id) && available.has(item.id));
     if (targetGroups.length !== requested.size) throw new Error('A requested group ID was not observed in the source bundle.');
     targetGroups.forEach((item, index) => group(item, `reselected.groups[${index}]`, true));
   }
