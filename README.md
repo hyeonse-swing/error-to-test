@@ -402,9 +402,12 @@ Use the ID shown by Browser Error Log to find its observed groups, selected TC c
 ```sh
 error-to-test trace ./analysis --event-id "YOUR_EVENT_ID"
 error-to-test trace ./analysis --event-id "YOUR_EVENT_ID" --project "YOUR_PROJECT"
+error-to-test trace ./analysis --reference '{"project":"YOUR_PROJECT","eventId":"YOUR_EVENT_ID"}'
 error-to-test trace ./analysis --event-id "YOUR_EVENT_ID" --format json
 error-to-test trace ./analysis --event-id "YOUR_EVENT_ID" --target-fingerprint "$TARGET_FINGERPRINT"
 ```
+
+Paste the JSON copied from Browser Error Log into `--reference` to match its exact project and event ID, including spaces and quotes. Use `--reference` or the separate ID and project options.
 
 The read-only `error-to-test/trace-1` result includes all matching groups because two projects can reuse an ID. Pass `--project` to match one exact project name; an ID found only in other projects then yields `found: false` and exit `2`. It retains `unselected`, `blocked`, and `review-ready` states; a selected case omitted from the latest linked run is `not-run`. Linked results use the same latest-run and target-scope rules as `results`. Output includes source hashes, partial-export status, and unknown retention without copying error messages or stacks. An ID missing from the saved input yields `found: false` and CLI exit `2`; it does not establish that the event never occurred or was never collected. Invalid bundles, linked results, or options exit `1`. Original input bytes can be rechecked with `verify --input` when available.
 

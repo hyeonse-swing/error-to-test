@@ -40,7 +40,7 @@ const help = `Error to Test — local error analysis and regression TC drafts
   error-to-test results new-directory [--format text|json] [--out summary.md] [--target-fingerprint SHA256] [--require-pass | --fail-on STATUS ...]
   error-to-test readiness new-directory [--format text|json]
   error-to-test coverage new-directory [--format text|json]
-  error-to-test trace new-directory --event-id ID [--project NAME] [--format text|json] [--target-fingerprint SHA256]
+  error-to-test trace new-directory (--event-id ID [--project NAME] | --reference JSON) [--format text|json] [--target-fingerprint SHA256]
   error-to-test compare BASELINE CURRENT [--format text|json] [--out comparison.md] [--max-new N]
 
 Options:
@@ -55,6 +55,7 @@ Options:
   --format text|json      Readiness format (default: text Markdown; exit 0 ready, 2 blocked/empty, 1 on error)
   --format text|json      Observed group coverage format (default: text Markdown; read-only, no gate)
   --event-id ID           Trace an SDK event ID within one saved analysis (exit 2 when absent)
+  --reference JSON        Trace a copied Browser Error Log {project,eventId} reference
   --project NAME          Scope trace matches to one exact project name
   --target-fingerprint SHA256  Scope trace outcomes to this linked target fingerprint
   --profile FILE         Confirmed app scenarios and explicit assertions (analyze/verify); existing profile to extend (init-profile)
@@ -181,7 +182,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, input: { type: 'string', multiple: true }, error: { type: 'string' }, report: { type: 'string' },
     format: { type: 'string' }, profile: { type: 'string' }, baseline: { type: 'string' }, project: { type: 'string' }, environment: { type: 'string' },
     release: { type: 'string' }, page: { type: 'string' }, type: { type: 'string' }, runtime: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'require-pass': { type: 'boolean' }, 'target-fingerprint': { type: 'string' }, 'event-id': { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
+    top: { type: 'string' }, 'min-count': { type: 'string' }, 'max-new': { type: 'string' }, group: { type: 'string', multiple: true }, 'fail-on': { type: 'string', multiple: true }, 'require-pass': { type: 'boolean' }, 'target-fingerprint': { type: 'string' }, 'event-id': { type: 'string' }, reference: { type: 'string' }, out: { type: 'string' }, reviewed: { type: 'boolean' },
     draft: { type: 'string' }, port: { type: 'string' },
     reproduce: { type: 'string', multiple: true }, precondition: { type: 'string', multiple: true },
     expected: { type: 'string' }, 'expected-source': { type: 'string' },
@@ -391,16 +392,40 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (command === 'trace') {
-    if (positionals.length !== 2 || !positionals[1]?.trim() || !values['event-id']?.trim()) {
-      throw new Error('trace requires one bundle directory and --event-id ID.');
+    if (positionals.length !== 2 || !positionals[1]?.trim() ||
+      (values['event-id'] === undefined) === (values.reference === undefined)) {
+      throw new Error('trace requires one bundle directory and exactly one of --event-id ID or --reference JSON.');
     }
-    if (Object.keys(values).some(key => !['event-id', 'project', 'format', 'target-fingerprint', 'help'].includes(key))) {
-      throw new Error('Unsupported option for trace. Use only --event-id ID, --project NAME, --format text|json, and --target-fingerprint SHA256.');
+    if (Object.keys(values).some(key => !['event-id', 'reference', 'project', 'format', 'target-fingerprint', 'help'].includes(key))) {
+      throw new Error('Unsupported option for trace. Use only --event-id ID, --reference JSON, --project NAME, --format text|json, and --target-fingerprint SHA256.');
     }
     const format = values.format ?? 'text';
     if (format !== 'text' && format !== 'json') throw new Error('trace --format must be text or json.');
-    const trace = await readEventTrace(resolve(positionals[1]), values['event-id'], {
-      project: values.project, targetFingerprint: values['target-fingerprint'],
+    if (values.reference !== undefined && values.project !== undefined) {
+      throw new Error('Use --reference on its own; it already contains the project and event ID.');
+    }
+    let eventId = values['event-id'];
+    let project = values.project;
+    if (values.reference !== undefined) {
+      if (Buffer.byteLength(values.reference, 'utf8') > 64 * 1024) {
+        throw new Error('--reference JSON must be 64 KiB or smaller.');
+      }
+      let parsed: unknown;
+      try { parsed = JSON.parse(values.reference); }
+      catch { throw new Error('--reference requires a JSON object with project and eventId strings.'); }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('--reference requires a JSON object with project and eventId strings.');
+      }
+      const candidate = parsed as Record<string, unknown>;
+      if (typeof candidate.project !== 'string' || !candidate.project.trim() ||
+        typeof candidate.eventId !== 'string' || !candidate.eventId.trim()) {
+        throw new Error('--reference requires a JSON object with project and eventId strings.');
+      }
+      eventId = candidate.eventId;
+      project = candidate.project;
+    }
+    const trace = await readEventTrace(resolve(positionals[1]), eventId!, {
+      project, targetFingerprint: values['target-fingerprint'],
     });
     const content = format === 'json' ? jsonText(trace) : renderEventTrace(trace);
     if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('The event trace exceeds 64 MiB. Narrow the bundle before requesting output.');
@@ -489,6 +514,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (values['fail-on'] !== undefined) throw new Error('--fail-on applies to results only.');
   if (values['target-fingerprint'] !== undefined) throw new Error('--target-fingerprint applies to results only.');
   if (values['event-id'] !== undefined) throw new Error('--event-id applies to trace only.');
+  if (values.reference !== undefined) throw new Error('--reference applies to trace only.');
   if (values['max-new'] !== undefined) throw new Error('--max-new applies to compare only.');
   if (values.baseline !== undefined && values.baseline.trim() === '') throw new Error('--baseline requires a bundle directory.');
   if ((values.input === undefined) === (values.error === undefined)) throw new Error('Provide exactly one of --input or --error.');

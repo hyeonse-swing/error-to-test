@@ -134,6 +134,47 @@ test('trace rejects invalid options, redacted IDs, and a stale bundle', async ()
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
+test('trace accepts a copied project and event reference with exact quoted values', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-trace-reference-'));
+  try {
+    const directory = join(temp, 'bundle');
+    const eventId = 'error "with spaces"';
+    const project = 'Project "North"';
+    const source = JSON.stringify({ schemaVersion: 1, events: [
+      event(eventId, project, 'Checkout failed', 1),
+      event(eventId, 'Project South', 'Checkout failed', 1),
+    ] });
+    await writeBundle(directory, analyzeErrors(source));
+    const reference = JSON.stringify({ project, eventId, ignored: 'does not affect lookup' });
+    const result = run(['trace', directory, '--reference', reference, '--format', 'json']);
+    assert.equal(result.status, 0, result.stderr);
+    const trace = JSON.parse(result.stdout);
+    assert.equal(trace.project, project);
+    assert.equal(trace.eventId, eventId);
+    assert.deepEqual(trace.matches.map((match: { project: string }) => match.project), [project]);
+
+    const missing = run(['trace', directory, '--reference',
+      JSON.stringify({ project: 'Project Elsewhere', eventId }), '--format', 'json']);
+    assert.equal(missing.status, 2, missing.stderr);
+    assert.equal(JSON.parse(missing.stdout).found, false);
+
+    for (const value of ['{', '{}', '[]', '"nested"', '{"project":"","eventId":"known"}',
+      JSON.stringify({ project, eventId: 123 })]) {
+      const invalid = run(['trace', directory, '--reference', value]);
+      assert.equal(invalid.status, 1, invalid.stderr);
+      assert.equal(invalid.stdout, '');
+    }
+    for (const args of [
+      ['--reference', reference, '--event-id', eventId],
+      ['--reference', reference, '--project', project],
+    ]) {
+      const invalid = run(['trace', directory, ...args]);
+      assert.equal(invalid.status, 1, invalid.stderr);
+      assert.equal(invalid.stdout, '');
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('empty suites and already redacted saved IDs remain traceable without inventing outcomes', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-trace-empty-'));
   try {
