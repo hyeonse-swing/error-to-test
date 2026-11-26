@@ -125,9 +125,13 @@ function questionsForSteps(steps: WebStep[], directNavigation: boolean): string[
 }
 
 function safeFacts(group: IssueGroup): string[] {
-  const facts = [`${group.count} captured event(s); ${group.viewCount} view(s).`, `Observed ${group.type} error: ${redactText(group.message)}`, `Runtime: ${group.runtime}; environment: ${redactText(group.environment)}; release: ${redactText(group.release)}.`];
+  const count = group.evidence[0]?.source === 'manual'
+    ? `${group.count} submitted report(s).`
+    : `${group.count} captured event(s); ${group.viewCount} view(s).`;
+  const facts = [count, `Observed ${group.type} error: ${redactText(group.message)}`, `Runtime: ${group.runtime}; environment: ${redactText(group.environment)}; release: ${redactText(group.release)}.`];
   if (group.pagePath) facts.push(`Observed page path: ${redactText(group.pagePath)}`);
   for (const event of group.evidence) {
+    if (event.type === 'resource' && event.resourcePath) facts.push(`Observed resource path: ${redactText(event.resourcePath)}.`);
     if (event.network) {
       const { method, url, status } = event.network;
       facts.push(status !== undefined && status < 100

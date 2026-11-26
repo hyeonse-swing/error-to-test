@@ -18,7 +18,9 @@ function signature(item: ErrorObservation): string {
   const network = item.network;
   const site = network
     ? `${network.method.toUpperCase()} ${pagePath(network.url)} ${network.status ?? ''}`
-    : sourceFrame(item.stack, item.message) || sourceFrame(item.componentStack, item.message);
+    : item.type === 'resource' && item.resourcePath
+      ? item.resourcePath
+      : sourceFrame(item.stack, item.message) || sourceFrame(item.componentStack, item.message);
   return [item.name ?? '', item.message, site].join(' | ');
 }
 

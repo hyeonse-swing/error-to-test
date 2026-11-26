@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import { writeBundle } from '../src/artifacts.ts';
 import { createCandidates, parseProfile } from '../src/candidates.ts';
 import { compareAnalyses, renderComparison } from '../src/comparison.ts';
 import { refineBundle } from '../src/refinement.ts';
+import { exportFlowQa } from '../src/exports/flow-qa.ts';
 
 const event = {
   schemaVersion: 1, eventId: 'resource-1', project: 'demo', environment: 'test', release: 'r1', sdkVersion: '0.2.9',
@@ -43,6 +44,74 @@ test('BEL v1 resource events work across JSON, JSONL, manual input, profiles, an
   assert.equal(comparison.counts.both, 1);
   assert.equal(comparison.issues[0]?.type, 'resource');
   assert.match(renderComparison(comparison), /Type: resource/);
+});
+
+test('resource URLs separate real SDK failures in analysis and the CLI comparison gate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'error-to-test-resource-compare-'));
+  const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
+  const run = (args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15_000 });
+  const resource = (id: string, release: string, url: string) => ({
+    ...event, eventId: id, release,
+    context: { resourceTag: 'img', resourceUrl: url, unrelated: 'ignored' },
+  });
+  const input = (item: ReturnType<typeof resource>) => JSON.stringify({ schemaVersion: 1, events: [item] });
+  try {
+    const first = resource('hero', 'r1', 'https://example.com/hero.png?cache=one');
+    const second = resource('receipt', 'r2', 'https://example.com/receipt.png?cache=two');
+    const samePath = resource('hero-again', 'r1', 'https://example.com/hero.png?cache=changed');
+    const combined = analyzeErrors(JSON.stringify({ schemaVersion: 1, events: [first, second, samePath] }));
+    assert.equal(combined.groups.length, 2);
+    assert.deepEqual(combined.groups.map(group => group.count).sort(), [1, 2]);
+    assert.deepEqual(new Set(combined.groups.map(group => group.signature.split(' | ').at(-1))), new Set(['/hero.png', '/receipt.png']));
+    assert.doesNotMatch(JSON.stringify(combined), /cache=|unrelated|ignored/);
+    const malformed = parseInput(input(resource('broken', 'r1', 'https://')));
+    assert.equal(malformed.observations[0]?.resourcePath, undefined);
+    assert.doesNotMatch(JSON.stringify(malformed.observations), /resourceUrl|unrelated|ignored/);
+
+    const baselineInput = join(root, 'baseline.json'), currentInput = join(root, 'current.json');
+    const baseline = join(root, 'baseline'), current = join(root, 'current');
+    await writeFile(baselineInput, input(first));
+    await writeFile(currentInput, input(second));
+    assert.equal(run(['analyze', '--input', baselineInput, '--out', baseline]).status, 0);
+    assert.equal(run(['analyze', '--input', currentInput, '--out', current]).status, 0);
+    const comparison = run(['compare', baseline, current, '--format', 'json', '--max-new', '0']);
+    assert.equal(comparison.status, 2, comparison.stderr);
+    assert.deepEqual(JSON.parse(comparison.stdout).counts, { 'only-current': 1, both: 0, 'only-baseline': 1 });
+    assert.match(await readFile(join(current, 'report.md'), 'utf8'), /receipt\.png/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('cache-busting browser stack frames keep source positions without query data', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'error-to-test-stack-compare-'));
+  const cli = fileURLToPath(new URL('../bin/dev.mjs', import.meta.url));
+  const run = (args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15_000 });
+  const report = (id: string, release: string, line: number) => JSON.stringify({
+    schemaVersion: 'error-to-test/manual-1', errors: [{
+      id, project: 'shop', release, page: '/checkout', runtime: 'browser',
+      message: 'Checkout failed', stack: `Error: Checkout failed\n    at submit (https://example.com/chunks/(shop)/cart.js?build=42:${line}:17)`,
+    }],
+  });
+  try {
+    const first = report('before', 'r1', 2), second = report('after', 'r2', 3);
+    const analysis = analyzeErrors(first);
+    assert.match(analysis.groups[0]!.signature, /chunks\/\(shop\)\/cart\.js:2:17/);
+    assert.doesNotMatch(JSON.stringify(analysis), /build=42/);
+    assert.match(analysis.candidates[0]!.facts[0]!, /submitted report/);
+    assert.doesNotMatch(analysis.candidates[0]!.facts[0]!, /captured event|view/);
+    assert.match(exportFlowQa(analysis).flow, /1 submitted report\(s\)/);
+
+    const baselineInput = join(root, 'baseline.json'), currentInput = join(root, 'current.json');
+    const baseline = join(root, 'baseline'), current = join(root, 'current');
+    await writeFile(baselineInput, first);
+    await writeFile(currentInput, second);
+    assert.equal(run(['analyze', '--input', baselineInput, '--out', baseline]).status, 0);
+    assert.equal(run(['analyze', '--input', currentInput, '--out', current]).status, 0);
+    const comparison = run(['compare', baseline, current, '--format', 'json', '--max-new', '0']);
+    assert.equal(comparison.status, 2, comparison.stderr);
+    assert.deepEqual(JSON.parse(comparison.stdout).counts, { 'only-current': 1, both: 0, 'only-baseline': 1 });
+    assert.match(await readFile(join(current, 'report.md'), 'utf8'), /chunks\/\(shop\)\/cart\.js:3:17/);
+    assert.doesNotMatch(await readFile(join(current, 'analysis.json'), 'utf8'), /build=42/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('BEL network statuses include 0 and 599, but invalid codes and unknown types still reject', () => {

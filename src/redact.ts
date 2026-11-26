@@ -33,6 +33,20 @@ export function redactText(value: string): string {
   return redactTextWithoutUrls(value.replace(URL_PATTERN, (match) => safeUrl(match)));
 }
 
+/** Preserve a frame's line and column when a query or fragment precedes them. */
+export function redactStack(value: string): string {
+  const frameUrl = /(?:\bhttps?:\/\/|(?<!:)\/\/)[^\s<>"']+/gi;
+  const lines = value.split(/(\r?\n)/);
+  const withoutFrameQueries = lines.map((line, index) => {
+    if (index % 2 === 1 || !/^\s*(?:at\s+|.*@(?:https?:\/\/|\/\/)|https?:\/\/|\/\/)/.test(line)) return line;
+    return line.replace(frameUrl, (url) => {
+      const location = /^(.*[?#].*):(\d+):(\d+)(\)*)$/.exec(url);
+      return location ? `${safeUrl(location[1]!)}:${location[2]}:${location[3]}${location[4]}` : url;
+    });
+  }).join('');
+  return redactText(withoutFrameQueries);
+}
+
 export function pagePath(value?: string): string {
   if (!value) return '';
   try {

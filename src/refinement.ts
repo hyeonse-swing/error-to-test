@@ -63,7 +63,7 @@ function observation(value: unknown, label: string): void {
   for (const field of ['id', 'project', 'environment', 'release', 'message'] as const) string(raw[field], `${label}.${field}`);
   if (raw.source !== 'browser-error' && raw.source !== 'manual') invalid(`${label}.source`);
   if (!eventTypes.has(raw.type as EventType) || !runtimes.has(raw.runtime as Runtime)) invalid(`${label}.type/runtime`);
-  for (const field of ['name', 'stack', 'componentStack', 'page', 'occurredAt', 'viewId', 'expected', 'expectedSource'] as const) {
+  for (const field of ['name', 'stack', 'componentStack', 'page', 'occurredAt', 'viewId', 'resourcePath', 'expected', 'expectedSource'] as const) {
     optionalString(raw[field], `${label}.${field}`);
   }
   for (const field of ['reproduction', 'preconditions', 'questions'] as const) strings(raw[field], `${label}.${field}`);

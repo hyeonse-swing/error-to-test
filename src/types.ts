@@ -27,6 +27,7 @@ export interface ErrorObservation {
   occurredAt?: string;
   viewId?: string;
   network?: { method: string; url: string; status?: number; durationMs?: number };
+  resourcePath?: string;
   reproduction: string[];
   preconditions: string[];
   questions: string[];

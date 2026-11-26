@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { parseInput } from '../src/input.ts';
-import { pagePath, redactText, safeUrl } from '../src/redact.ts';
+import { pagePath, redactStack, redactText, safeUrl } from '../src/redact.ts';
 
 const event = {
   schemaVersion: 1, eventId: 'e1', project: 'shop', environment: 'prod', release: 'r1',
@@ -113,6 +113,14 @@ test('URL and text helpers remove credentials and location secrets', () => {
     '[redacted-token] [redacted-token] [redacted-token]');
   const delimiter = '-'.repeat(5);
   assert.equal(redactText(`${delimiter}BEGIN PRIVATE KEY${delimiter}\nprivate-data\n${delimiter}END PRIVATE KEY${delimiter}`), '[redacted-private-key]');
+});
+
+test('stack redaction keeps browser frame positions after removing query and fragment', () => {
+  const chromium = 'Error: checkout failed\n    at submit (https://user:pass@example.com/chunks/(shop)/cart.js?token=secret#chunk:2:17)';
+  const firefox = 'submit@https://example.com/chunks/(shop)/cart.js?build=42#chunk:3:8';
+  assert.equal(redactStack(chromium), 'Error: checkout failed\n    at submit (https://example.com/chunks/(shop)/cart.js:2:17)');
+  assert.equal(redactStack(firefox), 'submit@https://example.com/chunks/(shop)/cart.js:3:8');
+  assert.equal(redactStack('Error: open https://example.com/cart.js?token=secret:3:8'), 'Error: open https://example.com/cart.js');
 });
 
 test('protocol-relative credentials are absent from page, message, stack and network artifacts', () => {

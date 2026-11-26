@@ -1,6 +1,6 @@
 import type { ErrorObservation, EventType, ParsedInput, Runtime, WebStep } from './types.ts';
 import { compareTimestamps, record, text, optionalText, strings, timestamp, parseWebSteps, hash } from './validation.ts';
-import { redactText, safeUrl } from './redact.ts';
+import { pagePath, redactStack, redactText, safeUrl } from './redact.ts';
 import { inputSource } from './input-source.ts';
 
 export interface ParseInputOptions {
@@ -93,12 +93,20 @@ function browserEvent(value: unknown, index: number): ErrorObservation {
   const page = text(item.page, `${label}.page`);
   const eventRuntime = runtime(item.runtime, `${label}.runtime`);
   optionalText(item.browser, `${label}.browser`);
+  let resourcePath: string | undefined;
   if (item.context !== undefined) {
     const context = record(item.context, `${label}.context`);
     for (const [key, val] of Object.entries(context)) {
       if (val !== null && typeof val !== 'string' && typeof val !== 'boolean' && (typeof val !== 'number' || !Number.isFinite(val))) {
         throw new Error(`${label}.context.${key} must be scalar`);
       }
+    }
+    const resourceUrl = context.resourceUrl;
+    if (type === 'resource' && typeof resourceUrl === 'string' &&
+      (/^https?:\/\//i.test(resourceUrl) || resourceUrl.startsWith('/')) &&
+      URL.canParse(resourceUrl, 'https://placeholder.invalid/')) {
+      const sanitized = safeUrl(resourceUrl);
+      if (sanitized !== '[redacted-url]') resourcePath = pagePath(sanitized);
     }
   }
   let network: ErrorObservation['network'];
@@ -118,10 +126,11 @@ function browserEvent(value: unknown, index: number): ErrorObservation {
     id: redactText(id), source: 'browser-error', project: redactText(project), environment: redactText(environment),
     release: redactText(release), type, message: redactText(message), runtime: eventRuntime,
     ...(name === undefined ? {} : { name: redactText(name) }),
-    ...(stack === undefined ? {} : { stack: redactText(stack) }),
-    ...(componentStack === undefined ? {} : { componentStack: redactText(componentStack) }),
+    ...(stack === undefined ? {} : { stack: redactStack(stack) }),
+    ...(componentStack === undefined ? {} : { componentStack: redactStack(componentStack) }),
     page: safeUrl(page), occurredAt, viewId: redactText(viewId),
     ...(network === undefined ? {} : { network }),
+    ...(resourcePath === undefined || resourcePath === '[redacted-path]' ? {} : { resourcePath }),
     reproduction: [], preconditions: [], questions: [], steps: [],
   };
 }
@@ -156,8 +165,8 @@ function manualError(value: unknown, index: number, defaults: ParseInputOptions)
     release: redactText(release), type, message: redactText(message), runtime: eventRuntime,
     ...(page === undefined ? {} : { page: safeUrl(page) }),
     ...(name === undefined ? {} : { name: redactText(name) }),
-    ...(stack === undefined ? {} : { stack: redactText(stack) }),
-    ...(componentStack === undefined ? {} : { componentStack: redactText(componentStack) }),
+    ...(stack === undefined ? {} : { stack: redactStack(stack) }),
+    ...(componentStack === undefined ? {} : { componentStack: redactStack(componentStack) }),
     ...(occurredAt === undefined ? {} : { occurredAt }), reproduction, preconditions, questions,
     ...(!alteredExpected && expected !== undefined ? { expected } : {}),
     ...(!alteredExpected && expectedSource !== undefined ? { expectedSource } : {}), steps: stepResult.steps,
