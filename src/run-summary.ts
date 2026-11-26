@@ -3,7 +3,7 @@ import { lstat, open, opendir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { literal, readVerifiedBundle } from './artifacts.ts';
 import { redactText } from './redact.ts';
-import { record, text, timestamp } from './validation.ts';
+import { compareTimestamps, record, text, timestamp } from './validation.ts';
 import { safeReportedTargetName, validatedTargetFingerprint, validateResultSelection, type LinkedSelection } from './result-selection.ts';
 
 export type LinkedRunStatus = 'passed' | 'failed' | 'blocked' | 'error' | 'interrupted';
@@ -115,7 +115,7 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
   if (!runStatuses.has(status as LinkedRunStatus)) throw new Error(`Linked result ${name} has an invalid run status.`);
   const startedAt = timestamp(raw.startedAt, `${name}.startedAt`);
   const finishedAt = timestamp(raw.finishedAt, `${name}.finishedAt`);
-  if (finishedAt < startedAt) throw new Error(`Linked result ${name} finished before it started.`);
+  if (compareTimestamps(finishedAt, startedAt) < 0) throw new Error(`Linked result ${name} finished before it started.`);
   text(raw.note, `${name}.note`);
   const targetName = raw.targetName === undefined ? undefined : safeReportedTargetName(raw.targetName, `${name}.targetName`);
   const targetFingerprint = raw.targetFingerprint === undefined ? undefined
@@ -150,8 +150,8 @@ function parseResult(content: string, name: string, inputSha256: string, suiteSh
 }
 
 function later(a: LinkedRun, b: LinkedRun): boolean {
-  if (a.finishedAt !== b.finishedAt) return a.finishedAt > b.finishedAt;
-  if (a.startedAt !== b.startedAt) return a.startedAt > b.startedAt;
+  if (a.finishedAt !== b.finishedAt) return compareTimestamps(a.finishedAt, b.finishedAt) > 0;
+  if (a.startedAt !== b.startedAt) return compareTimestamps(a.startedAt, b.startedAt) > 0;
   return a.runId > b.runId;
 }
 

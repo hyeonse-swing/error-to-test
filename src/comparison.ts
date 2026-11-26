@@ -1,6 +1,6 @@
 import { fencedText, literal, readVerifiedBundle } from './artifacts.ts';
 import { pagePath, redactText } from './redact.ts';
-import { hash, record, timestamp } from './validation.ts';
+import { compareTimestamps, hash, record, timestamp } from './validation.ts';
 import type { EventType, Runtime, SourceCoverage } from './types.ts';
 
 export type ComparisonStatus = 'only-current' | 'both' | 'only-baseline';
@@ -47,7 +47,7 @@ function coverage(value: unknown, label: string): SourceCoverage {
     const p = record(raw.period, `${label}.period`);
     const from = p.from === undefined ? undefined : timestamp(p.from, `${label}.period.from`);
     const to = p.to === undefined ? undefined : timestamp(p.to, `${label}.period.to`);
-    if (from && to && from > to) throw new Error(`${label}.period.from exceeds to.`);
+    if (from && to && compareTimestamps(from, to) > 0) throw new Error(`${label}.period.from exceeds to.`);
     if (!from && !to) throw new Error(`${label}.period must contain a bound.`);
     period = { ...(from ? { from } : {}), ...(to ? { to } : {}) };
   }

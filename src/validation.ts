@@ -31,7 +31,19 @@ export function timestamp(value: unknown, label: string): string {
   const offset = match[8] === 'Z' ? 0 : (match[9] === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute);
   const local = new Date(parsed + offset * 60000);
   if (!Number.isFinite(parsed) || local.getUTCFullYear() !== year || local.getUTCMonth() + 1 !== month || local.getUTCDate() !== day || local.getUTCHours() !== hour || local.getUTCMinutes() !== minute || local.getUTCSeconds() !== second) throw new Error(`${label} is not a valid timestamp.`);
-  return new Date(parsed).toISOString();
+  const utc = new Date(parsed).toISOString();
+  const fraction = match[7]?.padEnd(9, '0');
+  if (!fraction || fraction.slice(3) === '000000') return utc;
+  return `${utc.slice(0, -4)}${fraction}Z`;
+}
+
+/** Compare timestamps normalized by timestamp(), including their sub-millisecond digits. */
+export function compareTimestamps(left?: string, right?: string): number {
+  if (!left || !right) return Number(Boolean(left)) - Number(Boolean(right));
+  const milliseconds = Date.parse(left) - Date.parse(right);
+  if (milliseconds !== 0) return Math.sign(milliseconds);
+  const fraction = (value: string) => Number(/\.([0-9]{3,9})Z$/.exec(value)?.[1]?.padEnd(9, '0') ?? '000000000');
+  return Math.sign(fraction(left) - fraction(right));
 }
 
 const roles = new Set(['button', 'link', 'textbox', 'heading', 'checkbox', 'radio', 'combobox', 'option', 'status', 'alert', 'dialog', 'tab', 'row', 'cell', 'list', 'listitem', 'navigation', 'searchbox', 'switch']);

@@ -1,12 +1,16 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ErrorObservation, IssueGroup } from './types.ts';
-import { hash } from './validation.ts';
+import { compareTimestamps, hash } from './validation.ts';
 import { pagePath } from './redact.ts';
 
-function sourceFrame(stack?: string): string {
+function sourceFrame(stack: string | undefined, message: string): string {
   if (!stack) return '';
   const lines = stack.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const frame = lines.find((line) => /\bat\s+|@|:\d+(?::\d+)?/.test(line));
+  const frame = lines.find((line) => line !== message && (
+    /^at\s+\S/.test(line)
+    || /^[^@:]*@(?:.+:\d+|\[native code\])$/.test(line)
+    || /^(?:[a-z][\w+.-]*:\/\/|\.{0,2}\/|[A-Za-z]:[\\/]|[^\s:]+\.\w+)\S*:\d+$/.test(line)
+  ));
   return frame ?? '';
 }
 
@@ -14,7 +18,7 @@ function signature(item: ErrorObservation): string {
   const network = item.network;
   const site = network
     ? `${network.method.toUpperCase()} ${pagePath(network.url)} ${network.status ?? ''}`
-    : sourceFrame(item.stack ?? item.componentStack);
+    : sourceFrame(item.stack, item.message) || sourceFrame(item.componentStack, item.message);
   return [item.name ?? '', item.message, site].join(' | ');
 }
 
@@ -63,15 +67,15 @@ export function groupObservations(observations: ErrorObservation[]): IssueGroup[
     group.count++;
     group.eventIds.push(item.id);
     group.evidence.push(item);
-    if (item.occurredAt && (!group.lastOccurredAt || item.occurredAt > group.lastOccurredAt)) group.lastOccurredAt = item.occurredAt;
+    if (item.occurredAt && (!group.lastOccurredAt || compareTimestamps(item.occurredAt, group.lastOccurredAt) > 0)) group.lastOccurredAt = item.occurredAt;
   }
   for (const group of groups.values()) {
     group.eventIds.sort();
     group.viewCount = new Set(group.evidence.map((item) => item.viewId).filter((id): id is string => !!id)).size;
     group.context = sharedContext(group.evidence);
-    group.evidence.sort((a, b) => (b.occurredAt ?? '').localeCompare(a.occurredAt ?? '') || a.id.localeCompare(b.id));
+    group.evidence.sort((a, b) => compareTimestamps(b.occurredAt, a.occurredAt) || a.id.localeCompare(b.id));
     group.evidence = group.evidence.slice(0, 5);
   }
   return [...groups.values()].sort((a, b) => b.viewCount - a.viewCount || b.count - a.count ||
-    (b.lastOccurredAt ?? '').localeCompare(a.lastOccurredAt ?? '') || a.id.localeCompare(b.id));
+    compareTimestamps(b.lastOccurredAt, a.lastOccurredAt) || a.id.localeCompare(b.id));
 }

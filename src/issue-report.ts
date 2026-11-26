@@ -1,5 +1,5 @@
 import { literal, readVerifiedBundle } from './artifacts.ts';
-import { record, timestamp } from './validation.ts';
+import { compareTimestamps, record, timestamp } from './validation.ts';
 
 const MAX_REPORT_BYTES = 64 * 1024 * 1024;
 const groupIdPattern = /^group-[0-9a-f]{16}$/;
@@ -46,7 +46,7 @@ function sourceCoverage(value: unknown): string[] {
       (period.from === undefined && period.to === undefined)) invalid('coverage.period');
     const from = period.from === undefined ? undefined : timestamp(period.from, 'coverage.period.from');
     const to = period.to === undefined ? undefined : timestamp(period.to, 'coverage.period.to');
-    if (from !== undefined && to !== undefined && from > to) invalid('coverage.period order');
+    if (from !== undefined && to !== undefined && compareTimestamps(from, to) > 0) invalid('coverage.period order');
     if (from !== undefined) lines.push(`Period from: ${period.from}`);
     if (to !== undefined) lines.push(`Period to: ${period.to}`);
   }

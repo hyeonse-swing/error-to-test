@@ -1,5 +1,5 @@
 import type { ErrorObservation, EventType, ParsedInput, Runtime, WebStep } from './types.ts';
-import { record, text, optionalText, strings, timestamp, parseWebSteps, hash } from './validation.ts';
+import { compareTimestamps, record, text, optionalText, strings, timestamp, parseWebSteps, hash } from './validation.ts';
 import { redactText, safeUrl } from './redact.ts';
 import { inputSource } from './input-source.ts';
 
@@ -256,7 +256,7 @@ export function parseInput(content: string | readonly string[], options: ParseIn
   if (format !== 'jsonl' && files.some(file => !file.trim())) throw new Error('Input is empty');
   const from = options.from === undefined ? undefined : timestamp(options.from, 'from');
   const to = options.to === undefined ? undefined : timestamp(options.to, 'to');
-  if (from && to && from > to) throw new Error('from must not exceed to');
+  if (from && to && compareTimestamps(from, to) > 0) throw new Error('from must not exceed to');
   if (!['auto', 'json', 'text', 'jsonl'].includes(format)) throw new Error('Invalid input format');
   let kind: ParsedInput['coverage']['kind'] | undefined;
   let partial = false;
@@ -316,8 +316,8 @@ export function parseInput(content: string | readonly string[], options: ParseIn
       (!options.release || item.release === options.release) &&
       (!options.page || item.page === safeUrl(options.page)) &&
       (!options.type || item.type === options.type) &&
-      (!from || !!item.occurredAt && item.occurredAt >= from) &&
-      (!to || !!item.occurredAt && item.occurredAt <= to);
+      (!from || !!item.occurredAt && compareTimestamps(item.occurredAt, from) >= 0) &&
+      (!to || !!item.occurredAt && compareTimestamps(item.occurredAt, to) <= 0);
     if (!matches) filtered++;
     return matches;
   }).sort((a, b) => a.project.localeCompare(b.project) || a.id.localeCompare(b.id));

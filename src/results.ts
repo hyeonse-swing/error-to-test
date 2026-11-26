@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { jsonText, readVerifiedBundle } from './artifacts.ts';
-import { record, text, timestamp } from './validation.ts';
+import { compareTimestamps, record, text, timestamp } from './validation.ts';
 import { redactText } from './redact.ts';
 import { reportedTargetIdentity, validateResultSelection } from './result-selection.ts';
 import { MAX_LINKED_RESULT_BYTES } from './run-summary.ts';
@@ -51,7 +51,7 @@ export async function linkFlowQaReport(directory: string, rawReport: unknown): P
     reportCaseIds, new Set(expected.keys() as Iterable<string>), 'Flow QA report');
   if (status === 'passed' && cases.some(item => item.status !== 'passed')) throw new Error('The report status contradicts its case results.');
   const startedAt = timestamp(report.startedAt, 'report.startedAt'), finishedAt = timestamp(report.finishedAt, 'report.finishedAt');
-  if (finishedAt < startedAt) throw new Error('The run finished before its start timestamp.');
+  if (compareTimestamps(finishedAt, startedAt) < 0) throw new Error('The run finished before its start timestamp.');
   const output = {
     schemaVersion: 'error-to-test/results-1', runId,
     inputSha256: provenance.inputSha256, suiteSha256: provenance.suiteSha256,

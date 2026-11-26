@@ -133,6 +133,8 @@ error-to-test compare ./before ./current
 error-to-test compare ./before ./current --format json --out ./comparison.json
 ```
 
+If an older baseline grouped distinct source locations under the same error message, reanalyze the original logs for both snapshots with 0.5.6 or later before running `compare` or `--max-new`. Do the same for older analyses filtered with sub-millisecond time bounds. A saved bundle retains the groups and time window computed when it was created.
+
 Each signature is classified as `only-current`, `both`, or `only-baseline`, with supplied record counts on both sides and their difference. Matching keeps project, environment, runtime, error type, page path, and the complete fingerprint-v1 signature; only release is excluded. Changes to messages or source locations remain separate signatures. This comparison does not infer a common root cause from similar text.
 
 All source groups participate, including groups excluded from TC generation by `--top` or `--min-count`. Multiple release groups with the same comparison key are aggregated on each side, with their original group IDs and release labels preserved. Use `analyze --release` first when you want one release per side. View counts are not summed or compared.
