@@ -35,6 +35,41 @@ test('default export asks for review; acknowledged review removes only that ques
   assert.deepEqual(reviewed.provenance.mappings, [{ caseId: candidate.id, candidateId: candidate.id, groupId: candidate.groupId, eventIds: candidate.eventIds }]);
 });
 
+test('the exported suite trims Flow QA text and keeps literal fill values and review evidence', () => {
+  const padded: TestCandidate = {
+    ...candidate,
+    title: ' Checkout\u00a0',
+    preconditions: [' Account ready '],
+    questions: [' What applies? '],
+    steps: [
+      { type: 'open', path: '/checkout ' },
+      { type: 'act', instruction: ' Prepare the cart ' },
+      { type: 'click', locator: { by: 'testId', value: ' continue ' } },
+      { type: 'fill', locator: { by: 'label', value: ' Alias ' }, value: '  padded value  ' },
+      { type: 'assertVisible', locator: { by: 'role', value: 'button', name: ' Continue ' }, visible: false },
+      { type: 'assertText', locator: { by: 'text', value: ' Status ' }, expected: ' Recovered ', match: 'contains' },
+      { type: 'assertUrl', expected: ' /checkout ' },
+      { type: 'assertAgent', instruction: ' Confirm the cart ' },
+    ],
+  };
+  const result = exportFlowQa({ ...analysis, candidates: [padded] }, { reviewed: true });
+  const item = result.suite!.cases[0]!;
+  assert.equal(item.title, 'Checkout');
+  assert.deepEqual(item.preconditions, ['Account ready']);
+  assert.deepEqual(item.questions, ['What applies?']);
+  assert.deepEqual(item.steps, [
+    { type: 'open', path: '/checkout' },
+    { type: 'act', instruction: 'Prepare the cart' },
+    { type: 'click', locator: { by: 'testId', value: 'continue' } },
+    { type: 'fill', locator: { by: 'label', value: 'Alias' }, value: '  padded value  ' },
+    { type: 'assertVisible', locator: { by: 'role', value: 'button', name: 'Continue' }, visible: false },
+    { type: 'assertText', locator: { by: 'text', value: 'Status' }, expected: 'Recovered', match: 'contains' },
+    { type: 'assertUrl', expected: '/checkout' },
+    { type: 'assertAgent', instruction: 'Confirm the cart' },
+  ]);
+  assert.ok(result.flow.includes(JSON.stringify(padded.title)));
+});
+
 test('missing context compiles to a blocked case and untrusted headings stay quoted', () => {
   const unsafe: TestCandidate = { ...candidate, title: 'Error\n# Confirmed requirement', state: 'needs-context', expected: undefined, steps: [], questions: ['What action?'] };
   const result = exportFlowQa({ ...analysis, candidates: [unsafe] }, { reviewed: true });

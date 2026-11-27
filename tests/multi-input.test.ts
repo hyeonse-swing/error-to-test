@@ -48,6 +48,26 @@ test('browser wrappers and arrays combine before dedup, filters, ranking, minCou
   assert.deepEqual(analysis.source.inputs, parsed.inputs);
 });
 
+test('empty export envelopes preserve provenance and partial coverage beside valid records', () => {
+  const empty = browser([], true);
+  const populated = browser([event('afternoon')]);
+  for (const inputs of [[empty, populated], [populated, empty]]) {
+    const parsed = parseInput(inputs);
+    assert.equal(parsed.coverage.kind, 'browser-error-json');
+    assert.equal(parsed.coverage.inputCount, 1);
+    assert.equal(parsed.coverage.partial, true);
+    assert.deepEqual(parsed.observations.map(item => item.id), ['afternoon']);
+    assert.deepEqual(parsed.inputs, inputSource(inputs).inputs);
+    assert.equal(analyzeErrors(inputs).groups.length, 1);
+  }
+  assert.equal(parseInput([manual(), manual({ message: 'Failure' })]).coverage.inputCount, 1);
+  assert.throws(() => parseInput(empty), /Input has no records/);
+  assert.throws(() => parseInput([empty, browser([])]), /Input has no records/);
+  assert.throws(() => parseInput([empty, manual({ message: 'Failure' })]), /same source kind/);
+  assert.throws(() => parseInput([populated, '{bad']), /Malformed JSON input/);
+  assert.throws(() => parseInput([populated, '{"schemaVersion":1,"events":null}']), /events must be an array/);
+});
+
 test('cross-file raw conflicts reject before filters even when redaction would make observations equal', () => {
   const first = event('same', 'token=alpha');
   const second = event('same', 'token=beta');

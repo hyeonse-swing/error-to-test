@@ -258,7 +258,6 @@ function decodeDocument(content: string, format: NonNullable<ParseInputOptions['
         raw = top.errors;
       } else throw new Error('Unsupported input schemaVersion');
     }
-    if (raw.length === 0) throw new Error('Input has no records');
     return { kind, partial, raw };
   }
   const lines = content.trim().split(/\r?\n/);
@@ -295,6 +294,7 @@ export function parseInput(content: string | readonly string[], options: ParseIn
     raw.push(...document.raw);
     if (document.lineNumbers) jsonlLocations.push(...document.lineNumbers.map(lineNumber => ({ fileIndex: fileIndex + 1, lineNumber })));
   }
+  if (raw.length === 0) throw new Error('Input has no records');
   const browser = kind === 'browser-error-json' || kind === 'browser-error-jsonl';
   const observations = raw.map((item, index) => {
     if (format !== 'jsonl') return browser ? browserEvent(item, index) : manualError(item, index, options);

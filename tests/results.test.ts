@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { analyzeErrors, writeBundle, linkFlowQaReport, readRunSummary } from '../src/index.ts';
 import { jsonText } from '../src/artifacts.ts';
+import { hash } from '../src/validation.ts';
 
 test('run linkage binds exact suite/cases, redacts reasons, preserves old results and never closes issues', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'error-to-test-results-'));
@@ -43,6 +44,40 @@ test('run linkage binds exact suite/cases, redacts reasons, preserves old result
       await assert.rejects(stat(join(out, 'results', `${invalid.runId}.json`)), { code: 'ENOENT' });
     }
     assert.deepEqual(await readdir(join(out, 'results')), [`${raw.runId}.json`]);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('old bundle links only its exact suite or the suite after Flow QA text normalization', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'error-to-test-legacy-suite-'));
+  try {
+    const out = join(temp, 'bundle');
+    await writeBundle(out, analyzeErrors('Error: observed'));
+    const provenanceFile = join(out, 'provenance.json');
+    const suiteFile = join(out, 'cases/error-to-test.json');
+    const provenance = JSON.parse(await readFile(provenanceFile, 'utf8'));
+    const suite = JSON.parse(await readFile(suiteFile, 'utf8'));
+    const normalizedHash = provenance.suiteSha256;
+    const changed = structuredClone(suite);
+    changed.cases[0].title += ' another test';
+    suite.cases[0].title += ' ';
+    const legacySuite = jsonText(suite);
+    const legacyProvenance = jsonText({ ...provenance, suiteSha256: hash(legacySuite) });
+    await writeFile(suiteFile, legacySuite);
+    await writeFile(provenanceFile, legacyProvenance);
+
+    const report = {
+      schemaVersion: 'flow-qa/report-1', runId: randomUUID(), suiteHash: normalizedHash,
+      startedAt: '2026-10-13T01:00:00Z', finishedAt: '2026-10-13T01:01:00Z', status: 'blocked',
+      cases: [{ id: suite.cases[0].id, status: 'blocked' }],
+    };
+    await assert.rejects(linkFlowQaReport(out, { ...report, suiteHash: hash(jsonText(changed)) }), /different suite/);
+    await linkFlowQaReport(out, report);
+    assert.equal((await readRunSummary(out)).counts.blocked, 1);
+    assert.equal(await readFile(suiteFile, 'utf8'), legacySuite);
+    assert.equal(await readFile(provenanceFile, 'utf8'), legacyProvenance);
+
+    await writeFile(suiteFile, jsonText(changed));
+    await assert.rejects(linkFlowQaReport(out, { ...report, runId: randomUUID() }), /STALE_BUNDLE/);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 

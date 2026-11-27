@@ -3,7 +3,18 @@ import type { ErrorObservation, IssueGroup } from './types.ts';
 import { compareTimestamps, hash } from './validation.ts';
 import { pagePath } from './redact.ts';
 
-function sourceFrame(stack: string | undefined, message: string, sdkMessageAtLimit = false): string {
+const NATIVE_FRAME = /^(?:at .+ \((?:native|<anonymous>)\)|.*@\[native code\])$/;
+
+function preferredFrame(frames: string[], sourceLocation?: string): string {
+  const first = frames[0] ?? '';
+  if (!NATIVE_FRAME.test(first)) return first;
+  // Built-in functions can lead the stack in V8 and WebKit. Their shared
+  // frame would hide distinct application call sites from CI comparisons.
+  return frames.slice(1).find(frame => !NATIVE_FRAME.test(frame) &&
+    !frame.includes('<anonymous>') && /:\d+(?::\d+)?\)?$/.test(frame)) ?? sourceLocation ?? first;
+}
+
+function sourceFrame(stack: string | undefined, message: string, sdkMessageAtLimit = false, sourceLocation?: string): string {
   if (!stack) return '';
   let lines = stack.split(/\r?\n/);
   const messageLines = message.split(/\r?\n/);
@@ -19,17 +30,17 @@ function sourceFrame(stack: string | undefined, message: string, sdkMessageAtLim
     } else {
       // SDK message and stack limits differ. A clipped header can continue
       // with indented prose; only use a V8 frame with a recognizable location.
-      return lines.slice(1).find(line =>
-        /^\s+at\s+.+(?::\d+:\d+\)?|\((?:native|<anonymous>)\))\s*$/.test(line))?.trim() ?? '';
+      return preferredFrame(lines.slice(1).filter(line =>
+        /^\s+at\s+.+(?::\d+:\d+\)?|\((?:native|<anonymous>)\))\s*$/.test(line)).map(line => line.trim()), sourceLocation);
     }
   }
   lines = lines.map((line) => line.trim()).filter(Boolean);
-  const frame = lines.find((line) => line !== message && (
+  const frames = lines.filter((line) => line !== message && (
     /^at\s+\S/.test(line)
     || /^[^@:]*@(?:.+:\d+|\[native code\])$/.test(line)
     || /^(?:[a-z][\w+.-]*:\/\/|\.{0,2}\/|[A-Za-z]:[\\/]|[^\s:]+\.\w+)\S*:\d+$/.test(line)
   ));
-  return frame ?? '';
+  return preferredFrame(frames, sourceLocation);
 }
 
 function signature(item: ErrorObservation): string {
@@ -39,7 +50,9 @@ function signature(item: ErrorObservation): string {
     ? `${network.method.toUpperCase()} ${pagePath(network.url)} ${network.status ?? ''}`
     : item.type === 'resource' && item.resourcePath
       ? item.resourcePath
-      : sourceFrame(item.stack, item.message, sdkMessageAtLimit) || sourceFrame(item.componentStack, item.message) ||
+      : sourceFrame(item.stack, item.message, sdkMessageAtLimit,
+        item.source === 'browser-error' && item.type === 'javascript' ? item.sourceLocation : undefined) ||
+        sourceFrame(item.componentStack, item.message) ||
         (item.source === 'browser-error' && item.type === 'javascript' ? item.sourceLocation ?? '' : '');
   const parts = [item.name ?? '', item.message, site];
   const legacy = parts.join(' | ');

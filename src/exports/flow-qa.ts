@@ -1,5 +1,5 @@
-import type { Analysis, FlowQaExport, FlowQaSuite, TestCandidate, WebStep } from '../types.ts';
-import { hash } from '../validation.ts';
+import type { Analysis, FlowQaExport, FlowQaSuite, Locator, TestCandidate, WebStep } from '../types.ts';
+import { hash, parseWebSteps } from '../validation.ts';
 import { redactText } from '../redact.ts';
 
 const reviewQuestion = 'Review this draft case and confirm its requirement, steps, and assertion before execution.';
@@ -15,6 +15,53 @@ function quoted(value: string): string {
 
 function stepNeedsRedaction(step: WebStep): boolean {
   return JSON.stringify(step) !== JSON.stringify(step, (_key, value: unknown) => typeof value === 'string' ? safe(value) : value);
+}
+
+function normalizeLocator(locator: Locator): Locator {
+  if (locator.by === 'role') {
+    return locator.name === undefined ? locator : { ...locator, name: locator.name.trim() };
+  }
+  return { ...locator, value: locator.value.trim() };
+}
+
+function normalizeStep(step: WebStep): WebStep {
+  switch (step.type) {
+    case 'open': return { ...step, path: step.path.trim() };
+    case 'act':
+    case 'assertAgent': return { ...step, instruction: step.instruction.trim() };
+    case 'click':
+    case 'fill':
+    case 'assertVisible': return { ...step, locator: normalizeLocator(step.locator) };
+    case 'assertText': return { ...step, locator: normalizeLocator(step.locator), expected: step.expected.trim() };
+    case 'assertUrl': return { ...step, expected: step.expected.trim() };
+  }
+}
+
+// Match Flow QA's suite-1 text normalization and field order. Fill values are literal.
+function normalizeSuite(suite: FlowQaSuite): FlowQaSuite {
+  return {
+    ...suite,
+    title: suite.title.trim(),
+    ...(suite.source && { source: { ...suite.source, file: suite.source.file.trim() } }),
+    requirements: suite.requirements.map(requirement => ({ ...requirement, text: requirement.text.trim() })),
+    cases: suite.cases.map(test => ({
+      ...test,
+      title: test.title.trim(),
+      preconditions: test.preconditions.map(value => value.trim()),
+      questions: test.questions.map(value => value.trim()),
+      steps: parseWebSteps(test.steps.map(normalizeStep), `Flow QA case ${test.id} steps`),
+    })),
+  };
+}
+
+export function matchesNormalizedFlowQaSuite(verifiedSuite: Record<string, unknown>, suiteHash: unknown): boolean {
+  if (typeof suiteHash !== 'string' || !/^[a-f0-9]{64}$/.test(suiteHash)) return false;
+  try {
+    const suite = normalizeSuite(verifiedSuite as unknown as FlowQaSuite);
+    return hash(`${JSON.stringify(suite, null, 2)}\n`) === suiteHash;
+  } catch {
+    return false;
+  }
 }
 
 function exportCase(candidate: TestCandidate, reviewed: boolean): { requirement: FlowQaSuite['requirements'][number]; test: FlowQaSuite['cases'][number] } {
@@ -96,12 +143,12 @@ export function exportFlowQa(analysis: Analysis, options: { reviewed?: boolean }
     },
   };
   if (exported.length) {
-    const suite: FlowQaSuite = {
+    const suite = normalizeSuite({
       schemaVersion: 'flow-qa/suite-1', platform: 'web', id: 'error_to_test', title: 'Error to test candidates',
       source: { file: 'flows/error-to-test.md', sha256: flowSha256 },
       requirements: exported.map((item) => item.requirement),
       cases: exported.map((item) => item.test),
-    };
+    });
     result.suite = suite;
     const suiteText = `${JSON.stringify(suite, null, 2)}\n`;
     if (Buffer.byteLength(suiteText) > 512 * 1024) throw new Error('The generated suite exceeds Flow QA UI\'s 512 KiB limit. Narrow the selected groups or scenario details.');

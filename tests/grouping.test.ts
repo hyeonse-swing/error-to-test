@@ -96,6 +96,34 @@ test('headerless stack frames retain their source signatures and empty stacks ha
     ` | ${base.message} | `);
 });
 
+test('native function frames use the browser call site when one is available', () => {
+  for (const [cartStack, billingStack] of [
+    [
+      'SyntaxError: Invalid JSON\n    at JSON.parse (<anonymous>)\n    at submit (https://example.com/cart.js:1:58)',
+      'SyntaxError: Invalid JSON\n    at JSON.parse (<anonymous>)\n    at submit (https://example.com/billing.js:1:60)',
+    ],
+    [
+      'parse@[native code]\nsubmit@https://example.com/cart.js:1:58',
+      'parse@[native code]\nsubmit@https://example.com/billing.js:1:60',
+    ],
+  ]) {
+    const cart = { ...base, id: 'cart', name: 'SyntaxError', message: 'Invalid JSON', stack: cartStack };
+    const billing = { ...cart, id: 'billing', stack: billingStack };
+    const groups = groupObservations([cart, billing]);
+    assert.equal(groups.length, 2);
+    assert.ok(groups.every(group => group.signature.includes(`${group.eventIds[0]}.js:1:`)));
+    assert.equal(groupObservations([cart, { ...cart, id: 'cart-again' }]).length, 1);
+  }
+
+  const nativeOnly = { ...base, name: 'SyntaxError', message: 'Invalid JSON',
+    stack: 'SyntaxError: Invalid JSON\n    at JSON.parse (<anonymous>)',
+    sourceLocation: 'https://example.com/cart.js:1:58' };
+  assert.equal(groupObservations([nativeOnly])[0]?.signature,
+    'SyntaxError | Invalid JSON | https://example.com/cart.js:1:58');
+  assert.equal(groupObservations([{ ...nativeOnly, source: 'manual' }])[0]?.signature,
+    'SyntaxError | Invalid JSON | at JSON.parse (<anonymous>)');
+});
+
 test('component-only React stacks retain their first component when the error has no source frame', () => {
   for (const stack of [undefined, 'Error: ' + base.message]) {
     const groups = groupObservations(['Cart', 'Billing'].map(id => ({

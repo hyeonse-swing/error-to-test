@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { jsonText, readVerifiedBundle } from './artifacts.ts';
+import { matchesNormalizedFlowQaSuite } from './exports/flow-qa.ts';
 import { compareTimestamps, record, text, timestamp } from './validation.ts';
 import { redactText } from './redact.ts';
 import { reportedTargetIdentity, validateResultSelection } from './result-selection.ts';
@@ -13,13 +14,16 @@ const caseStatuses = new Set(['passed', 'failed', 'flaky', 'blocked', 'skipped',
 /** Associate a normalized Flow QA report with the exact exported immutable suite. */
 export async function linkFlowQaReport(directory: string, rawReport: unknown): Promise<string> {
   const root = resolve(directory);
-  const { verification: verified, provenance } = await readVerifiedBundle(root);
-  if (!verified.suite) throw new Error('This bundle has no suite to associate with a run.');
+  const { suite, provenance } = await readVerifiedBundle(root);
+  if (!suite) throw new Error('This bundle has no suite to associate with a run.');
   const report = record(rawReport, 'report');
   if (report.schemaVersion !== 'flow-qa/report-1') throw new Error('Use a normalized Flow QA report-1, not an e2e raw report.');
   const runId = text(report.runId, 'report.runId');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) throw new Error('Invalid Flow QA run ID.');
-  if (report.suiteHash !== provenance.suiteSha256) throw new Error('The run used a different suite. Its result cannot be linked to these candidates.');
+  // Existing bundles may predate Flow QA text normalization at export time.
+  if (report.suiteHash !== provenance.suiteSha256 && !matchesNormalizedFlowQaSuite(suite, report.suiteHash)) {
+    throw new Error('The run used a different suite. Its result cannot be linked to these candidates.');
+  }
   const status = text(report.status, 'report.status');
   if (!runStatuses.has(status)) throw new Error('Invalid Flow QA run status.');
   const rawTarget = report.target === undefined ? undefined : record(report.target, 'report.target');

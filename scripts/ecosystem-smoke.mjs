@@ -154,11 +154,11 @@ try {
   await new Promise((accept, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', accept); });
   const targetURL = `http://127.0.0.1:${server.address().port}`;
   const profiles = ['javascript', 'resource'].map(type => ({
-    id: `check-${type}`, title: `Check ${type}`, match: { type },
+    id: `check-${type}`, title: `Check ${type} `, match: { type },
     requirement: 'The controlled fixture displays its recovered state', expectedSource: 'Controlled fixture contract',
     preconditions: [], setupConfirmed: true, questions: [], steps: [
-      { type: 'open', path: `/${type}` }, { type: 'click', locator: { by: 'role', value: 'button', name: 'Check' } },
-      { type: 'assertText', locator: { by: 'role', value: 'status' }, expected: 'Recovered', match: 'equals' },
+      { type: 'open', path: `/${type}` }, { type: 'click', locator: { by: 'role', value: 'button', name: ' Check ' } },
+      { type: 'assertText', locator: { by: 'role', value: 'status' }, expected: ' Recovered ', match: 'equals' },
     ],
   }));
   const profilePath = join(temp, 'profile.json');
