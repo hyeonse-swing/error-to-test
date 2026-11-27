@@ -106,7 +106,7 @@ function renderList() {
   navigation.setAttribute('aria-label', 'Observed error groups');
   const selected = new Set(session.candidates.map(item => item.groupId));
   for (const group of session.groups) {
-    const control = button(group.message || group.id, () => { selectedGroup = group.id; render(); }, 'group-button');
+    const control = button(group.message.trim() ? group.message : '(no error message)', () => { selectedGroup = group.id; render(); }, 'group-button');
     control.setAttribute('aria-current', selectedGroup === group.id ? 'true' : 'false');
     append(control, element('small', '', `${group.id} · ${selected.has(group.id) ? 'Selected' : 'Outside selection'}`));
     navigation.append(control);
@@ -116,7 +116,7 @@ function renderList() {
 }
 function renderEvidence(group) {
   const section = element('section', 'card');
-  append(section, heading('Observation'), paragraph(group.message, 'lead'));
+  append(section, heading('Observation'), paragraph(group.message.trim() ? group.message : '(no error message)', 'lead'));
   const facts = element('dl', 'facts');
   append(facts, labeledValue('Group ID', group.id), labeledValue('Project', group.project), labeledValue('Environment', group.environment),
     labeledValue('Release', group.release), labeledValue('Type', group.type), labeledValue('Page', group.pagePath),

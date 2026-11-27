@@ -86,14 +86,15 @@ function browserEvent(value: unknown, index: number): ErrorObservation {
   number(item.sequence, `${label}.sequence`, true);
   number(item.elapsedMs, `${label}.elapsedMs`);
   const type = eventType(item.type, `${label}.type`);
-  const message = text(item.message, `${label}.message`);
-  const name = optionalText(item.name, `${label}.name`);
-  const stack = optionalText(item.stack, `${label}.stack`);
-  const componentStack = optionalText(item.componentStack, `${label}.componentStack`);
+  const message = text(item.message, `${label}.message`, false);
+  const name = optionalText(item.name, `${label}.name`, false);
+  const stack = optionalText(item.stack, `${label}.stack`, false);
+  const componentStack = optionalText(item.componentStack, `${label}.componentStack`, false);
   const page = text(item.page, `${label}.page`);
   const eventRuntime = runtime(item.runtime, `${label}.runtime`);
-  optionalText(item.browser, `${label}.browser`);
+  optionalText(item.browser, `${label}.browser`, false);
   let resourcePath: string | undefined;
+  let sourceLocation: string | undefined;
   if (item.context !== undefined) {
     const context = record(item.context, `${label}.context`);
     for (const [key, val] of Object.entries(context)) {
@@ -107,6 +108,16 @@ function browserEvent(value: unknown, index: number): ErrorObservation {
       URL.canParse(resourceUrl, 'https://placeholder.invalid/')) {
       const sanitized = safeUrl(resourceUrl);
       if (sanitized !== '[redacted-url]') resourcePath = pagePath(sanitized);
+    }
+    const filename = context.filename;
+    const line = context.lineno;
+    const column = context.colno;
+    if (type === 'javascript' && typeof filename === 'string' && filename.length <= 8192 &&
+      /^https?:\/\//i.test(filename) && URL.canParse(filename) &&
+      typeof line === 'number' && Number.isSafeInteger(line) && line > 0 &&
+      typeof column === 'number' && Number.isSafeInteger(column) && column > 0) {
+      const sanitized = safeUrl(filename);
+      if (sanitized !== '[redacted-url]') sourceLocation = `${sanitized}:${line}:${column}`;
     }
   }
   let network: ErrorObservation['network'];
@@ -131,6 +142,7 @@ function browserEvent(value: unknown, index: number): ErrorObservation {
     page: safeUrl(page), occurredAt, viewId: redactText(viewId),
     ...(network === undefined ? {} : { network }),
     ...(resourcePath === undefined || resourcePath === '[redacted-path]' ? {} : { resourcePath }),
+    ...(sourceLocation === undefined ? {} : { sourceLocation }),
     reproduction: [], preconditions: [], questions: [], steps: [],
   };
 }

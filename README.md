@@ -135,7 +135,9 @@ error-to-test compare ./before ./current --format json --out ./comparison.json
 
 If an older baseline grouped distinct source locations under the same error message, reanalyze the original logs for both snapshots with 0.5.6 or later before running `compare` or `--max-new`. Do the same for older analyses filtered with sub-millisecond time bounds. A saved bundle retains the groups and time window computed when it was created.
 
-If an existing baseline grouped distinct resource paths or lost line and column positions from cache-busting browser stack URLs, reanalyze both original inputs with the same updated version before comparing them. Saved group signatures do not change when the package is upgraded.
+Browser Error Log can record an error with an empty message. Error to Test preserves it alongside the error name and any available location. For global JavaScript errors without a usable stack frame, the SDK's HTTP(S) filename, line and column can identify the source. The URL query and fragment are removed.
+
+If an older baseline merged separate errors, reanalyze **both** original inputs with the same updated version before comparing them. Affected cases include resource paths, cache-busting stack URLs, multiline error headings, stackless global errors with coordinates, and names or messages containing the fingerprint separator. Saved bundles keep their original signatures.
 
 Each signature is classified as `only-current`, `both`, or `only-baseline`, with supplied record counts on both sides and their difference. Matching keeps project, environment, runtime, error type, page path, and the complete fingerprint-v1 signature; only release is excluded. Changes to messages or source locations remain separate signatures. This comparison does not infer a common root cause from similar text.
 

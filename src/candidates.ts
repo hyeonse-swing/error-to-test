@@ -1,6 +1,6 @@
 import type { AppProfile, IssueGroup, ScenarioRule, TestCandidate, WebStep } from './types.ts';
 import { hash, optionalText, parseWebSteps, record, strings, text } from './validation.ts';
-import { pagePath, redactText, safeUrl } from './redact.ts';
+import { displayErrorMessage, pagePath, redactText, safeUrl } from './redact.ts';
 
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 const eventTypes = new Set(['javascript', 'promise', 'react', 'console', 'http', 'network', 'resource', 'manual']);
@@ -128,7 +128,7 @@ function safeFacts(group: IssueGroup): string[] {
   const count = group.evidence[0]?.source === 'manual'
     ? `${group.count} submitted report(s).`
     : `${group.count} captured event(s); ${group.viewCount} view(s).`;
-  const facts = [count, `Observed ${group.type} error: ${redactText(group.message)}`, `Runtime: ${group.runtime}; environment: ${redactText(group.environment)}; release: ${redactText(group.release)}.`];
+  const facts = [count, `Observed ${group.type} error: ${displayErrorMessage(redactText(group.message))}`, `Runtime: ${group.runtime}; environment: ${redactText(group.environment)}; release: ${redactText(group.release)}.`];
   if (group.pagePath) facts.push(`Observed page path: ${redactText(group.pagePath)}`);
   for (const event of group.evidence) {
     if (event.type === 'resource' && event.resourcePath) facts.push(`Observed resource path: ${redactText(event.resourcePath)}.`);

@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { lstat, open, opendir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { literal, readVerifiedBundle } from './artifacts.ts';
-import { redactText } from './redact.ts';
+import { displayErrorMessage, redactText } from './redact.ts';
 import { compareTimestamps, record, text, timestamp } from './validation.ts';
 import { safeReportedTargetName, validatedTargetFingerprint, validateResultSelection, type LinkedSelection } from './result-selection.ts';
 
@@ -192,7 +192,7 @@ export async function summarizeRunSummary(
   }
   const groups = analysis.groups.map((item, index) => {
     const group = record(item, `analysis.groups[${index}]`);
-    return { groupId: safeId(group.id, `analysis.groups[${index}].id`), message: redactText(text(group.message, `analysis.groups[${index}].message`)), cases: [] as RunSummary['groups'][number]['cases'] };
+    return { groupId: safeId(group.id, `analysis.groups[${index}].id`), message: redactText(text(group.message, `analysis.groups[${index}].message`, false)), cases: [] as RunSummary['groups'][number]['cases'] };
   });
   const groupById = new Map(groups.map(group => [group.groupId, group]));
   if (groupById.size !== groups.length) throw new Error('STALE_BUNDLE: Analysis group IDs are duplicated.');
@@ -346,7 +346,7 @@ export function renderRunSummary(summary: RunSummary): string {
   if (!summary.groups.length) lines.push('No source groups were found.', '');
   for (const group of summary.groups) {
     const groupId = safeId(group.groupId, 'summary.groupId');
-    lines.push(`## ${groupId}`, '', 'Observed message:', '', literal(group.message), '');
+    lines.push(`## ${groupId}`, '', 'Observed message:', '', literal(displayErrorMessage(group.message)), '');
     if (!group.cases.length) lines.push('No selected cases for this group.', '');
     for (const item of group.cases) {
       const caseId = safeId(item.caseId, 'summary.caseId');

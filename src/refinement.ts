@@ -60,10 +60,11 @@ function coverage(value: unknown, label: string): void {
 
 function observation(value: unknown, label: string): void {
   const raw = record(value, label);
-  for (const field of ['id', 'project', 'environment', 'release', 'message'] as const) string(raw[field], `${label}.${field}`);
+  for (const field of ['id', 'project', 'environment', 'release'] as const) string(raw[field], `${label}.${field}`);
   if (raw.source !== 'browser-error' && raw.source !== 'manual') invalid(`${label}.source`);
+  string(raw.message, `${label}.message`, raw.source === 'browser-error');
   if (!eventTypes.has(raw.type as EventType) || !runtimes.has(raw.runtime as Runtime)) invalid(`${label}.type/runtime`);
-  for (const field of ['name', 'stack', 'componentStack', 'page', 'occurredAt', 'viewId', 'resourcePath', 'expected', 'expectedSource'] as const) {
+  for (const field of ['name', 'stack', 'componentStack', 'page', 'occurredAt', 'viewId', 'resourcePath', 'sourceLocation', 'expected', 'expectedSource'] as const) {
     optionalString(raw[field], `${label}.${field}`);
   }
   for (const field of ['reproduction', 'preconditions', 'questions'] as const) strings(raw[field], `${label}.${field}`);
@@ -105,7 +106,7 @@ function group(value: unknown, label: string, requireContext: boolean): IssueGro
   const raw = record(value, label);
   if (typeof raw.id !== 'string' || !groupId.test(raw.id)) invalid(`${label}.id`);
   if (raw.fingerprintVersion !== 1) invalid(`${label}.fingerprintVersion`);
-  for (const field of ['project', 'environment', 'release', 'signature', 'message'] as const) string(raw[field], `${label}.${field}`);
+  for (const field of ['project', 'environment', 'release', 'signature'] as const) string(raw[field], `${label}.${field}`);
   string(raw.pagePath, `${label}.pagePath`, true);
   if (!eventTypes.has(raw.type as EventType) || !runtimes.has(raw.runtime as Runtime)) invalid(`${label}.type/runtime`);
   integer(raw.count, `${label}.count`, 1);
@@ -119,6 +120,7 @@ function group(value: unknown, label: string, requireContext: boolean): IssueGro
     observation(item, `${label}.evidence[${index}]`);
     if (!raw.eventIds.includes((item as { id: string }).id)) invalid(`${label}.evidence[${index}].id`);
   }
+  string(raw.message, `${label}.message`, raw.evidence.every(item => item.source === 'browser-error'));
   context(raw.context, `${label}.context`, requireContext);
   return raw as unknown as IssueGroup;
 }

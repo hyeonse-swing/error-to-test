@@ -3,7 +3,7 @@ import { isUtf8 } from 'node:buffer';
 import { dirname, resolve } from 'node:path';
 import { exportFlowQa } from './exports/flow-qa.ts';
 import { hash, record, text } from './validation.ts';
-import { redactText } from './redact.ts';
+import { displayErrorMessage, redactText } from './redact.ts';
 import { inputSource, validateInputSource } from './input-source.ts';
 import { reselectionChoices } from './reselection-choices.ts';
 import type { Analysis } from './types.ts';
@@ -83,7 +83,7 @@ export function renderReport(analysis: Analysis): string {
   for (const group of analysis.groups) {
     lines.push(`## ${group.id}`, '',
       `Records: ${group.count} · Observed page views: ${group.viewCount} · Last observed: ${group.lastOccurredAt ?? 'unknown'}`, '',
-      literal(`${group.project} / ${group.environment} / ${group.release} / ${group.runtime}\n${group.type} ${group.pagePath}\n${group.message}`), '');
+      literal(`${group.project} / ${group.environment} / ${group.release} / ${group.runtime}\n${group.type} ${group.pagePath}\n${displayErrorMessage(group.message)}`), '');
     const stacks: string[] = [];
     const seenStacks = new Set<string>();
     const seenComponentStacks = new Set<string>();

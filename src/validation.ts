@@ -12,8 +12,8 @@ export function text(value: unknown, label: string, required = true): string {
   if (typeof value !== 'string' || (required && !value.trim()) || value.length > 8192) throw new Error(`${label} must be ${required ? 'a non-empty' : 'a'} string of at most 8192 characters.`);
   return value;
 }
-export function optionalText(value: unknown, label: string): string | undefined {
-  return value === undefined ? undefined : text(value, label);
+export function optionalText(value: unknown, label: string, requireNonEmpty = true): string | undefined {
+  return value === undefined ? undefined : text(value, label, requireNonEmpty);
 }
 export function strings(value: unknown, label: string): string[] {
   if (value === undefined) return [];

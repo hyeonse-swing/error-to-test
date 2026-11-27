@@ -33,6 +33,11 @@ export function redactText(value: string): string {
   return redactTextWithoutUrls(value.replace(URL_PATTERN, (match) => safeUrl(match)));
 }
 
+/** Presentation only. Preserve the captured message in fingerprints and saved evidence. */
+export function displayErrorMessage(message: string): string {
+  return message.trim() ? message : '(no error message)';
+}
+
 /** Preserve a frame's line and column when a query or fragment precedes them. */
 export function redactStack(value: string): string {
   const frameUrl = /(?:\bhttps?:\/\/|(?<!:)\/\/)[^\s<>"']+/gi;

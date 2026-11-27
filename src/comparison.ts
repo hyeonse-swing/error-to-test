@@ -1,5 +1,5 @@
 import { fencedText, literal, readVerifiedBundle } from './artifacts.ts';
-import { pagePath, redactText } from './redact.ts';
+import { displayErrorMessage, pagePath, redactText } from './redact.ts';
 import { compareTimestamps, hash, record, timestamp } from './validation.ts';
 import type { EventType, Runtime, SourceCoverage } from './types.ts';
 
@@ -71,7 +71,7 @@ function parseSnapshot(value: unknown, label: string): { side: ComparisonSide; g
       release: bounded(g.release, `${name}.release`), runtime: g.runtime as Runtime, type: g.type as EventType,
       pagePath: bounded(g.pagePath, `${name}.pagePath`, normalizedMax, false),
       signature: bounded(g.signature, `${name}.signature`, normalizedMax, false),
-      message: bounded(g.message, `${name}.message`), count: integer(g.count, `${name}.count`, 10000, 1),
+      message: bounded(g.message, `${name}.message`, normalizedMax, cov.frequency === 'submitted-reports'), count: integer(g.count, `${name}.count`, 10000, 1),
     };
   });
   const recordCount = groups.reduce((sum, g) => sum + g.count, 0);
@@ -168,7 +168,7 @@ export function renderComparison(comparison: AnalysisComparison): string {
     if ((status === 'both' && (!before || !after)) || (status === 'only-current' && (before || !after)) || (status === 'only-baseline' && (!before || after)) || integer(issue.delta, `${name}.delta`, 10000, -10000) !== after - before) throw new Error(`${name} has inconsistent status or delta.`);
     observed[status]++;
     const fields = [redactText(bounded(issue.project, `${name}.project`)), redactText(bounded(issue.environment, `${name}.environment`)), issue.runtime, issue.type,
-      pagePath(bounded(issue.pagePath, `${name}.pagePath`, normalizedMax, false)), redactText(bounded(issue.signature, `${name}.signature`, normalizedMax, false)), redactText(bounded(issue.message, `${name}.message`))];
+      pagePath(bounded(issue.pagePath, `${name}.pagePath`, normalizedMax, false)), redactText(bounded(issue.signature, `${name}.signature`, normalizedMax, false)), displayErrorMessage(redactText(bounded(issue.message, `${name}.message`, normalizedMax, false)))];
     lines.push(`## ${issue.id} · ${status}`, '', `Baseline: ${before} · Current: ${after} · Delta: ${after - before >= 0 ? '+' : ''}${after - before}`, '',
       fencedText(`Project: ${fields[0]}\nEnvironment: ${fields[1]}\nRuntime: ${fields[2]}\nType: ${fields[3]}\nPage: ${fields[4]}\nMessage: ${fields[6]}\nSignature: ${fields[5]}`), '');
     if (issue.baseline !== undefined) lines.push(...renderOccurrence(issue.baseline, 'Baseline'));

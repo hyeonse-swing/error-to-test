@@ -117,3 +117,76 @@ test('source changes behind a repeated error heading count as new signatures in 
   assert.deepEqual(compareAnalyses(baseline, current).counts,
     { 'only-current': 1, both: 0, 'only-baseline': 1 });
 });
+
+test('skips every line of a V8 multiline error message before finding the source frame', () => {
+  const message = 'Invalid checkout:\nat least one item is required';
+  const observation = (id: string, file: string): ErrorObservation => ({
+    ...base, id, name: 'Error', message,
+    stack: `Error: ${message}\n    at submit (https://example.com/${file}:1:46)`,
+  });
+  const groups = groupObservations([observation('cart', 'cart.js'), observation('billing', 'billing.js')]);
+  assert.equal(groups.length, 2);
+  assert.ok(groups.every(group => group.count === 1));
+  assert.ok(groups.every(group => group.signature.includes(`${group.eventIds[0]}.js:1:46`)));
+  assert.ok(groups.every(group => !group.signature.endsWith('at least one item is required')));
+});
+
+test('finds a V8 source frame when the SDK message ends mid-line before the full stack heading', () => {
+  for (const fullMessage of [
+    `${'A'.repeat(1020)}\nat least one item is required`,
+    `${'A'.repeat(1024)}\nat least one item is required`,
+    `${'A'.repeat(1100)}\nat least one item is required`,
+    'A'.repeat(1024) + '\n    at least one selection is required',
+  ]) {
+    const capturedMessage = fullMessage.slice(0, 1024);
+    const observation = (id: string, file: string): ErrorObservation => ({
+      ...base, id, name: 'Error', message: capturedMessage,
+      stack: `Error: ${fullMessage}\n    at submit (https://example.com/${file}:1:46)`,
+    });
+    const groups = groupObservations([observation('cart', 'cart.js'), observation('billing', 'billing.js')]);
+    assert.equal(groups.length, 2, `captured message ends at ${capturedMessage.slice(-10)}`);
+    assert.ok(groups.every(group => group.signature.includes(`${group.eventIds[0]}.js:1:46`)));
+  }
+});
+
+test('uses the browser global error location when no stack frame exists', () => {
+  const observation = (id: string, sourceLocation: string): ErrorObservation => ({
+    ...base, id, stack: undefined, sourceLocation,
+  });
+  const cart = observation('cart', 'https://example.com/cart.js:14:3');
+  const billing = observation('billing', 'https://example.com/billing.js:14:3');
+  assert.equal(groupObservations([cart, billing]).length, 2);
+  assert.equal(groupObservations([cart])[0]?.signature,
+    ` | ${base.message} | https://example.com/cart.js:14:3`);
+  assert.equal(groupObservations([{ ...cart, stack: 'Error\n    at render (/src/actual.ts:1:2)' }])[0]?.signature,
+    ` | ${base.message} | at render (/src/actual.ts:1:2)`);
+  assert.equal(groupObservations([{ ...cart, source: 'manual' }])[0]?.signature,
+    ` | ${base.message} | `);
+});
+
+test('signatures preserve field boundaries when names and messages contain separators', () => {
+  const collisionPairs: [string, string, string, string][] = [
+    ['FormError', 'Checkout | Missing field', 'FormError | Checkout', 'Missing field'],
+    ['FormError |', ' Ready', 'FormError', '|  Ready'],
+  ];
+  for (const [firstName, firstMessage, secondName, secondMessage] of collisionPairs) {
+    const first = { ...base, id: 'first', name: firstName, message: firstMessage, stack: undefined };
+    const second = { ...first, id: 'second', name: secondName, message: secondMessage };
+    assert.equal([firstName, firstMessage, ''].join(' | '), [secondName, secondMessage, ''].join(' | '));
+    const groups = groupObservations([first, second]);
+    assert.equal(groups.length, 2);
+    assert.notEqual(groups[0]?.signature, groups[1]?.signature);
+    assert.ok(groups.some(group => group.signature.startsWith('fields | v1 | 3 | ')));
+    assert.ok(groups.every(group => group.count === 1));
+  }
+  const report = (id: string, name: string, message: string) => JSON.stringify({
+    schemaVersion: 'error-to-test/manual-1',
+    errors: [{ id, name, message, project: 'shop', environment: 'prod', page: '/checkout' }],
+  });
+  const baseline = analyzeErrors(report('first', 'FormError', 'Checkout | Missing field'));
+  const current = analyzeErrors(report('second', 'FormError | Checkout', 'Missing field'));
+  assert.deepEqual(compareAnalyses(baseline, current).counts,
+    { 'only-current': 1, both: 0, 'only-baseline': 1 });
+  assert.equal(groupObservations([{ ...base, name: 'FormError', stack: undefined }])[0]?.signature,
+    'FormError | Cannot read item 42 | ');
+});

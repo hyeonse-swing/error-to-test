@@ -3,9 +3,27 @@ import type { ErrorObservation, IssueGroup } from './types.ts';
 import { compareTimestamps, hash } from './validation.ts';
 import { pagePath } from './redact.ts';
 
-function sourceFrame(stack: string | undefined, message: string): string {
+function sourceFrame(stack: string | undefined, message: string, sdkMessageAtLimit = false): string {
   if (!stack) return '';
-  const lines = stack.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  let lines = stack.split(/\r?\n/);
+  const messageLines = message.split(/\r?\n/);
+  // V8 places the complete error message before the frames. A subsequent
+  // message line can itself start with "at" and must not be treated as a frame.
+  const firstLine = lines[0] ?? '';
+  const firstMessageLine = messageLines[0]!;
+  const headingIsComplete = firstLine === firstMessageLine || firstLine.endsWith(`: ${firstMessageLine}`);
+  if (message && (headingIsComplete || firstLine.includes(`: ${firstMessageLine}`))) {
+    if (!sdkMessageAtLimit && headingIsComplete &&
+      messageLines.slice(1).every((line, index) => lines[index + 1] === line)) {
+      lines = lines.slice(messageLines.length);
+    } else {
+      // SDK message and stack limits differ. A clipped header can continue
+      // with indented prose; only use a V8 frame with a recognizable location.
+      return lines.slice(1).find(line =>
+        /^\s+at\s+.+(?::\d+:\d+\)?|\((?:native|<anonymous>)\))\s*$/.test(line))?.trim() ?? '';
+    }
+  }
+  lines = lines.map((line) => line.trim()).filter(Boolean);
   const frame = lines.find((line) => line !== message && (
     /^at\s+\S/.test(line)
     || /^[^@:]*@(?:.+:\d+|\[native code\])$/.test(line)
@@ -16,12 +34,19 @@ function sourceFrame(stack: string | undefined, message: string): string {
 
 function signature(item: ErrorObservation): string {
   const network = item.network;
+  const sdkMessageAtLimit = item.source === 'browser-error' && item.message.length === 1024;
   const site = network
     ? `${network.method.toUpperCase()} ${pagePath(network.url)} ${network.status ?? ''}`
     : item.type === 'resource' && item.resourcePath
       ? item.resourcePath
-      : sourceFrame(item.stack, item.message) || sourceFrame(item.componentStack, item.message);
-  return [item.name ?? '', item.message, site].join(' | ');
+      : sourceFrame(item.stack, item.message, sdkMessageAtLimit) || sourceFrame(item.componentStack, item.message) ||
+        (item.source === 'browser-error' && item.type === 'javascript' ? item.sourceLocation ?? '' : '');
+  const parts = [item.name ?? '', item.message, site];
+  const legacy = parts.join(' | ');
+  if (isDeepStrictEqual(legacy.split(' | '), parts)) return legacy;
+  // Three fixed separators distinguish this from the two-separator legacy
+  // format. Length-prefixed fields preserve arbitrary pipes and whitespace.
+  return `fields | v1 | 3 | ${parts.map((part) => `${part.length}:${part}`).join('')}`;
 }
 
 function sharedContext(observations: ErrorObservation[]): NonNullable<IssueGroup['context']> {

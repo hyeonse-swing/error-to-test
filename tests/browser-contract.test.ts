@@ -7,9 +7,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseInput } from '../src/input.ts';
 import { analyzeErrors } from '../src/analysis.ts';
-import { writeBundle } from '../src/artifacts.ts';
+import { renderReport, writeBundle } from '../src/artifacts.ts';
 import { createCandidates, parseProfile } from '../src/candidates.ts';
 import { compareAnalyses, renderComparison } from '../src/comparison.ts';
+import { readRunSummary, renderRunSummary } from '../src/run-summary.ts';
+import { createProfileTemplate } from '../src/profile-template.ts';
 import { refineBundle } from '../src/refinement.ts';
 import { exportFlowQa } from '../src/exports/flow-qa.ts';
 
@@ -19,6 +21,37 @@ const event = {
   type: 'resource', name: 'ResourceLoadError', message: 'Failed to load img resource',
   page: '/items', runtime: 'browser', context: { resourceTag: 'img', resourceUrl: 'https://example.com/img.png' },
 };
+
+test('an SDK error with no message survives reporting, comparison and saved-bundle operations', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'error-to-test-empty-message-'));
+  try {
+    const first = { ...event, type: 'javascript', name: 'Error', message: '', stack: 'Error\n    at submit (/cart.js:3:5)' };
+    const second = { ...first, eventId: 'literal-label', message: '(no error message)' };
+    const analysis = analyzeErrors(JSON.stringify([first, second]));
+    assert.equal(analysis.groups.length, 2);
+    const blank = analysis.groups.find(group => group.message === '')!;
+    assert.deepEqual(blank.eventIds, [first.eventId]);
+    assert.equal(blank.evidence[0]?.message, '');
+    assert.equal(blank.evidence[0]?.name, 'Error');
+    assert.match(renderReport(analysis), /Observed javascript error: \(no error message\)/);
+    const comparison = compareAnalyses(analyzeErrors(JSON.stringify([second])), analysis);
+    assert.equal(comparison.issues.find(issue => issue.status === 'only-current')?.message, '');
+    assert.match(renderComparison(comparison), /Message: \(no error message\)/);
+
+    const bundle = join(root, 'bundle');
+    await writeBundle(bundle, analysis);
+    const summary = await readRunSummary(bundle);
+    assert.equal(summary.groups.find(group => group.groupId === blank.id)?.message, '');
+    assert.match(renderRunSummary(summary), /\(no error message\)/);
+    const profile = createProfileTemplate(analysis);
+    for (const scenario of profile.scenarios) {
+      scenario.requirement = 'Show a retry button';
+      scenario.expectedSource = 'Checkout specification';
+    }
+    const refined = await refineBundle(bundle, JSON.stringify(profile));
+    assert.equal(refined.groups.find(group => group.id === blank.id)?.evidence[0]?.message, '');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('BEL v1 resource events work across JSON, JSONL, manual input, profiles, and comparisons', () => {
   const json = JSON.stringify({ schemaVersion: 1, events: [event] });

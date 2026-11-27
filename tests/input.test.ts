@@ -24,6 +24,42 @@ test('browser export validates protocol and preserves only sanitized observation
   assert.equal('sequence' in parsed.observations[0]!, false);
 });
 
+test('browser exports retain empty diagnostic text accepted by the collector', () => {
+  const browserError = {
+    ...event, type: 'javascript', message: '', name: '', stack: '',
+    componentStack: '', browser: '', network: undefined,
+  };
+  const parsed = parseInput(JSON.stringify({ schemaVersion: 1, events: [browserError] }));
+  assert.equal(parsed.observations[0]?.message, '');
+  assert.equal(parsed.observations[0]?.name, '');
+  assert.equal(parsed.observations[0]?.stack, '');
+  assert.equal(parsed.observations[0]?.componentStack, '');
+  assert.equal(parsed.coverage.inputCount, 1);
+  assert.throws(() => parseInput(JSON.stringify([{ ...browserError, message: null }])), /message/);
+  assert.throws(() => parseInput(JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ message: '' }] })), /message/);
+});
+
+test('browser global error location uses sanitized filename and valid line and column', () => {
+  const browserError = {
+    ...event, type: 'javascript', network: undefined, stack: undefined,
+    context: { filename: 'https://alice:password@example.com/cart.js?token=abc#private', lineno: 42, colno: 7 },
+  };
+  const parsed = parseInput(JSON.stringify([browserError]));
+  assert.equal(parsed.observations[0]?.sourceLocation, 'https://example.com/cart.js:42:7');
+  assert.doesNotMatch(JSON.stringify(parsed.observations), /password|token=abc|#private/);
+  for (const changed of [
+    { type: 'resource' },
+    { context: { ...browserError.context, lineno: 0 } },
+    { context: { ...browserError.context, colno: 0 } },
+    { context: { ...browserError.context, colno: 1.5 } },
+    { context: { ...browserError.context, filename: 'file:///private/cart.js' } },
+    { context: { ...browserError.context, filename: '[redacted-url]' } },
+  ]) {
+    const result = parseInput(JSON.stringify([{ ...browserError, ...changed }]));
+    assert.equal(result.observations[0]?.sourceLocation, undefined);
+  }
+});
+
 test('JSON inputs accept one leading UTF-8 BOM while hashing the original bytes', () => {
   for (const value of [
     [event],
