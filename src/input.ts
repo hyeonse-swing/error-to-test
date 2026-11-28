@@ -186,7 +186,7 @@ function manualError(value: unknown, index: number, defaults: ParseInputOptions)
 }
 
 interface RawDocument {
-  kind: ParsedInput['coverage']['kind'];
+  kind?: ParsedInput['coverage']['kind'];
   partial: boolean;
   raw: unknown[];
   lineNumbers?: number[];
@@ -226,7 +226,6 @@ function decodeJsonl(content: string, fileIndex: number, remainingRecords: numbe
     raw.push(item);
     lineNumbers.push(lineNumber);
   }
-  if (kind === undefined) throw new Error(`JSONL input file ${fileIndex}: Input has no records.`);
   return { kind, partial: false, raw, lineNumbers };
 }
 
@@ -284,17 +283,22 @@ export function parseInput(content: string | readonly string[], options: ParseIn
   const jsonlLocations: { fileIndex: number; lineNumber: number }[] = [];
   for (const [fileIndex, file] of files.entries()) {
     const document = decodeDocument(file, format, fileIndex + 1, MAX_RECORDS - raw.length);
-    if (kind !== undefined && document.kind !== kind) {
-      if (format === 'jsonl') throw jsonlError(fileIndex + 1, document.lineNumbers![0]!, 'Input files must have the same source kind.');
-      throw new Error('Input files must have the same source kind.');
+    if (document.kind !== undefined) {
+      if (kind !== undefined && document.kind !== kind) {
+        if (format === 'jsonl') throw jsonlError(fileIndex + 1, document.lineNumbers![0]!, 'Input files must have the same source kind.');
+        throw new Error('Input files must have the same source kind.');
+      }
+      kind = document.kind;
     }
-    kind = document.kind;
     partial ||= document.partial;
     if (raw.length + document.raw.length > MAX_RECORDS) throw new Error('Input exceeds 10000 records');
     raw.push(...document.raw);
     if (document.lineNumbers) jsonlLocations.push(...document.lineNumbers.map(lineNumber => ({ fileIndex: fileIndex + 1, lineNumber })));
   }
-  if (raw.length === 0) throw new Error('Input has no records');
+  if (raw.length === 0) {
+    if (format === 'jsonl') throw new Error('JSONL input file 1: Input has no records.');
+    throw new Error('Input has no records');
+  }
   const browser = kind === 'browser-error-json' || kind === 'browser-error-jsonl';
   const observations = raw.map((item, index) => {
     if (format !== 'jsonl') return browser ? browserEvent(item, index) : manualError(item, index, options);

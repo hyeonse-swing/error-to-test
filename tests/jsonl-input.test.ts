@@ -66,6 +66,25 @@ test('single and multiple JSONL files retain original BOM bytes, boundaries, and
   assert.notEqual(combined.sha256, parseInput([second, first], { format: 'jsonl' }).sha256);
 });
 
+test('combined JSONL accepts zero-record files without losing source provenance', () => {
+  const empty = '\uFEFF \t\r\n\n';
+  for (const record of [event('afternoon'), manual('afternoon')]) {
+    const populated = `${JSON.stringify(record)}\n`;
+    for (const files of [[empty, populated], [populated, empty]]) {
+      const parsed = parseInput(files, { format: 'jsonl' });
+      assert.equal(parsed.coverage.inputCount, 1);
+      assert.deepEqual(parsed.observations.map(observation => observation.id), ['afternoon']);
+      assert.deepEqual(parsed.inputs, files.map(file => ({ sha256: sha256(file), byteLength: Buffer.byteLength(file) })));
+      assert.equal(analyzeErrors(files, { format: 'jsonl' }).groups.length, 1);
+    }
+  }
+  assert.match(failureMessage(empty), /Input has no records/);
+  assert.match(failureMessage([empty, empty]), /Input has no records/);
+  assert.match(failureMessage([empty, '{bad']), /file 2, line 1: Malformed JSON record/);
+  assert.match(failureMessage([empty, JSON.stringify(event('one')), empty, JSON.stringify(manual('two'))]),
+    /file 4, line 1: Input files must have the same source kind/);
+});
+
 test('raw JSONL records combine before deduplication, filtering, ranking, minCount, and top', () => {
   const a = event('a', 'A failed');
   const b = event('b', 'B failed');
