@@ -71,14 +71,21 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function browserScope(value: unknown, label: string): string {
+  // Older v1 exports can contain blank labels. Keep supplied nonblank values
+  // exactly, without inferring an environment or release from other fields.
+  const supplied = text(value, label, false);
+  return supplied.trim() ? supplied : 'unknown';
+}
+
 function browserEvent(value: unknown, index: number): ErrorObservation {
   const label = `events[${index}]`;
   const item = record(value, label);
   if (item.schemaVersion !== 1) throw new Error(`${label}.schemaVersion must be 1`);
   const id = text(item.eventId, `${label}.eventId`);
   const project = text(item.project, `${label}.project`);
-  const environment = text(item.environment, `${label}.environment`);
-  const release = text(item.release, `${label}.release`);
+  const environment = browserScope(item.environment, `${label}.environment`);
+  const release = browserScope(item.release, `${label}.release`);
   text(item.sdkVersion, `${label}.sdkVersion`);
   const occurredAt = timestamp(item.occurredAt, `${label}.occurredAt`);
   if (item.receivedAt !== undefined) timestamp(item.receivedAt, `${label}.receivedAt`);

@@ -61,7 +61,7 @@ node bin/error-to-test.mjs analyze --input examples/errors.json --profile exampl
 
 결과는 `analysis.json`, `report.md`, `flows/error-to-test.md`, `cases/error-to-test.json`, `provenance.json`입니다. 선택된 TC 후보가 없으면 suite를 만들지 않습니다. 출력 폴더는 매번 새 경로를 지정해야 합니다.
 
-Browser Error Log v1의 현재 이벤트 타입을 모두 지원하며, 0.2.0부터 추가된 `resource` 오류도 JSON·JSONL·프로필·비교·프로필 보완에 사용할 수 있습니다. 리소스 오류를 HTTP 오류로 바꾸거나 응답 상태·재현 동작을 추측하지 않습니다. `context.resourceUrl`의 정제된 경로가 있으면 실패한 리소스 구분에 사용하고, 그 밖의 context와 breadcrumbs는 테스트 단계로 변환하지 않습니다. 자체 수집기의 네트워크 상태 `0`도 알 수 없는/불투명 상태로 보존하며 실제 HTTP 응답 코드로 취급하지 않습니다.
+Browser Error Log v1의 현재 이벤트 타입을 모두 지원하며, 0.2.0부터 추가된 `resource` 오류도 JSON·JSONL·프로필·비교·프로필 보완에 사용할 수 있습니다. v1 이벤트에는 `environment`와 `release`를 각각 문자열로 제공해야 합니다. 빈 문자열이나 공백뿐인 값은 당시 정보를 알 수 없음을 나타내는 `unknown`으로 기록합니다. 리소스 오류를 HTTP 오류로 바꾸거나 응답 상태·재현 동작을 추측하지 않습니다. `context.resourceUrl`의 정제된 경로가 있으면 실패한 리소스 구분에 사용하고, 그 밖의 context와 breadcrumbs는 테스트 단계로 변환하지 않습니다. 자체 수집기의 네트워크 상태 `0`도 알 수 없는/불투명 상태로 보존하며 실제 HTTP 응답 코드로 취급하지 않습니다.
 
 `--min-count N`으로 입력에 N건 이상 있는 오류 묶음만 TC 후보로 만들 수 있습니다. 범위는 1~10,000이며 기본값은 1입니다. 중복 제거·날짜 필터 적용 후 건수를 기준으로 고르고, `--top`은 그중 순위가 높은 묶음 수를 제한합니다. 기준 미만의 묶음도 `analysis.json`과 `report.md`에 남으며, 제외가 발생하면 보고서에 선택 기준을 표시합니다. 이 건수는 입력에 포함된 수집 이벤트·제출 보고서 수입니다. `coverage.partial: false`는 원본에 부분 수집 표시가 없다는 뜻입니다. SDK가 `partial` 필드를 생략한 배치도 여기에 해당하며, 전체 수집 여부는 확인되지 않은 상태입니다.
 

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { parseInput } from '../src/input.ts';
+import { analyzeErrors } from '../src/analysis.ts';
 import { pagePath, redactStack, redactText, safeUrl } from '../src/redact.ts';
 
 const event = {
@@ -22,6 +23,51 @@ test('browser export validates protocol and preserves only sanitized observation
   assert.equal(parsed.observations[0]?.network?.url, 'https://example.com/api/order');
   assert.equal(parsed.observations[0]?.occurredAt, '2026-10-13T03:00:00.000Z');
   assert.equal('sequence' in parsed.observations[0]!, false);
+});
+
+test('Browser Error Log v1 JSON and JSONL normalize only blank environment and release labels', () => {
+  const records = [
+    { ...event, eventId: 'empty', environment: '', release: '' },
+    { ...event, eventId: 'whitespace', environment: ' \t ', release: '\n  ' },
+    { ...event, eventId: 'release-only', environment: ' ', release: 'r2' },
+    { ...event, eventId: 'environment-only', environment: 'stage', release: '\t' },
+    { ...event, eventId: 'current', environment: ' prod ', release: ' r1 ' },
+  ];
+  const sources = [
+    { content: JSON.stringify({ schemaVersion: 1, events: records }), format: 'json' as const },
+    { content: `${records.map(record => JSON.stringify(record)).join('\n')}\n`, format: 'jsonl' as const },
+  ];
+  for (const { content, format } of sources) {
+    const parsed = parseInput(content, { format });
+    const byId = new Map(parsed.observations.map(item => [item.id, item]));
+    assert.deepEqual([parsed.coverage.inputCount, parsed.coverage.duplicates], [5, 0]);
+    assert.deepEqual([byId.get('empty')?.environment, byId.get('empty')?.release], ['unknown', 'unknown']);
+    assert.deepEqual([byId.get('whitespace')?.environment, byId.get('whitespace')?.release], ['unknown', 'unknown']);
+    assert.deepEqual([byId.get('release-only')?.environment, byId.get('release-only')?.release], ['unknown', 'r2']);
+    assert.deepEqual([byId.get('environment-only')?.environment, byId.get('environment-only')?.release], ['stage', 'unknown']);
+    assert.deepEqual([byId.get('current')?.environment, byId.get('current')?.release], [' prod ', ' r1 ']);
+    const originalHash = createHash('sha256').update(content).digest('hex');
+    assert.equal(parsed.sha256, originalHash);
+    const analysis = analyzeErrors(content, { format });
+    assert.equal(analysis.source.sha256, originalHash);
+    assert.equal(analysis.groups.find(group => group.environment === 'unknown' && group.release === 'unknown')?.count, 2);
+  }
+});
+
+test('Browser Error Log labels still require present strings and raw duplicate IDs still conflict', () => {
+  for (const field of ['environment', 'release'] as const) {
+    for (const value of [undefined, null, 42]) {
+      const malformed = { ...event, [field]: value };
+      assert.throws(() => parseInput(JSON.stringify([malformed])), new RegExp(field));
+      assert.throws(() => parseInput(JSON.stringify(malformed), { format: 'jsonl' }), /Invalid browser record/);
+    }
+    const changed = { ...event, [field]: '' };
+    const reworded = { ...changed, [field]: ' ' };
+    assert.throws(() => parseInput(JSON.stringify([changed, reworded])), /Conflicting duplicate ID/);
+    assert.throws(() => parseInput(`${JSON.stringify(changed)}\n${JSON.stringify(reworded)}`, { format: 'jsonl' }), /Conflicting duplicate ID/);
+  }
+  assert.throws(() => parseInput(JSON.stringify({ schemaVersion: 'error-to-test/manual-1', errors: [{ message: 'Failure', environment: '' }] })), /environment/);
+  assert.throws(() => parseInput('{"message":"Failure","release":""}', { format: 'jsonl' }), /Invalid manual record/);
 });
 
 test('browser exports retain empty diagnostic text accepted by the collector', () => {

@@ -65,7 +65,7 @@ Textual expected behavior alone does not establish a runnable assertion. Supply 
 
 ## Analyze collected errors
 
-Accepts Browser Error Log v1 `{schemaVersion: 1, partial?: boolean, events: [...]}` exports or arrays of full v1 events. Files are limited to 10 MiB and 10,000 records. Identity duplicates are removed; conflicting payloads with the same project/event ID are rejected. `--from`/`--to` require timezone-qualified ISO timestamps. Undated manual reports are excluded when a date filter is requested.
+Accepts Browser Error Log v1 `{schemaVersion: 1, partial?: boolean, events: [...]}` exports or arrays of full v1 events. Each v1 event must supply `environment` and `release` as strings. Each blank label is recorded as `unknown` to reflect unavailable historical metadata. Files are limited to 10 MiB and 10,000 records. Identity duplicates are removed; conflicting payloads with the same project/event ID are rejected. `--from`/`--to` require timezone-qualified ISO timestamps. Undated manual reports are excluded when a date filter is requested.
 
 All current v1 event types are supported, including `resource` failures from Browser Error Log 0.2.0 and later. Resource events remain distinct from HTTP/network events; their presence does not establish a response status or an executable reproduction. The sanitized path from a resource event's `context.resourceUrl` identifies the failed resource when available; other context fields and breadcrumbs are not converted into test steps. Custom v1 network records may use status `0` (unknown/opaque), which is preserved without treating it as an HTTP response code.
 
